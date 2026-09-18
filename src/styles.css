@@ -247,3 +247,151 @@ input.count { max-width: 110px; }
   .room-card { grid-template-columns: 1fr; }
   .tariff-row, .tariff-head { grid-template-columns: 1fr 100px 1fr; }
 }
+
+/* ===================== PRD §4 · üst şerit, kur anahtarı, FAB ===================== */
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: rgba(15, 20, 32, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 32px;
+}
+.month-input { max-width: 170px; }
+.range-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip.checked { background: var(--accent-soft); border-color: var(--accent); color: #cfe0ff; }
+.chip-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-check input { display: none; }
+.custom-range { position: relative; }
+.custom-range summary { list-style: none; cursor: pointer; }
+.custom-range summary::-webkit-details-marker { display: none; }
+.popover { position: absolute; top: 34px; left: 0; z-index: 30; box-shadow: var(--shadow); width: max-content; }
+
+.currency-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.cur-btn {
+  background: transparent; border: none; color: var(--muted);
+  padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.cur-btn.active { background: var(--accent); color: #07101f; }
+
+.fab { position: fixed; right: 26px; bottom: 26px; z-index: 40; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.fab-menu { display: none; flex-direction: column; gap: 6px; }
+.fab:hover .fab-menu, .fab:focus-within .fab-menu { display: flex; }
+.fab-btn {
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--accent); color: #07101f; border: none;
+  font-size: 1.7rem; font-weight: 700; cursor: pointer; box-shadow: var(--shadow);
+}
+.fab-btn:hover { transform: scale(1.05); }
+
+/* ===================== Fiyat / gelir takvimi ===================== */
+
+.calendar-wrap { overflow-x: auto; }
+table.calendar { border-collapse: separate; border-spacing: 0; font-size: 0.8rem; }
+table.calendar th, table.calendar td { border: none; padding: 2px; }
+.sticky-col {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--card); text-align: left; min-width: 190px;
+  border-right: 1px solid var(--line);
+}
+.cal-head { text-align: center; min-width: 46px; color: var(--muted); }
+.cal-head.weekend { color: #cfe0ff; }
+.micro { font-size: 0.68rem; }
+.cal-cell {
+  width: 100%; min-width: 46px; min-height: 34px;
+  border: 1px solid transparent; border-radius: 7px;
+  background: var(--card-2); color: var(--text);
+  font: inherit; font-size: 0.72rem; cursor: pointer; padding: 6px 2px;
+  position: relative;
+}
+.cal-cell.filled { background: rgba(25, 158, 112, 0.16); border-color: rgba(25, 158, 112, 0.45); }
+.cal-cell.missing { background: rgba(217, 89, 38, 0.10); border-color: rgba(217, 89, 38, 0.30); color: var(--muted); }
+.cal-cell.flag { outline: 2px solid var(--bad); outline-offset: -2px; }
+.cal-cell.weekend { box-shadow: inset 0 -2px 0 rgba(207, 224, 255, 0.25); }
+.cal-cell:hover { border-color: var(--accent); }
+.cal-dot { position: absolute; top: 3px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* ===================== Grafikler ===================== */
+
+.split-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.donut { position: relative; display: inline-grid; place-items: center; }
+.donut svg { display: block; }
+.donut-slice { transition: opacity .15s ease; }
+.donut-slice:hover { opacity: 0.82; }
+.donut-center { position: absolute; display: grid; place-items: center; text-align: center; pointer-events: none; }
+.donut-center strong { font-size: 1.05rem; }
+.legend { display: flex; flex-direction: column; gap: 8px; min-width: 240px; flex: 1; }
+.legend-row { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.group-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+.bar-list { display: flex; flex-direction: column; gap: 6px; }
+.bar-list-row { display: grid; grid-template-columns: 200px 1fr 130px; gap: 10px; align-items: center; font-size: 0.85rem; }
+.bar-list-label { display: flex; align-items: center; gap: 6px; }
+.bar-list-track { height: 10px; background: var(--card-2); border-radius: 6px; overflow: hidden; }
+.bar-list-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+.bar-list-value { text-align: right; font-variant-numeric: tabular-nums; }
+.chart-pad { padding: 14px 16px 4px; }
+
+.delta { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.progress { height: 10px; background: var(--card-2); border-radius: 6px; overflow: hidden; }
+.progress span { display: block; height: 100%; }
+.progress-good { background: var(--good); }
+.progress-bad { background: var(--warn); }
+
+.mini-table { width: 100%; font-size: 0.85rem; }
+.mini-table td, .mini-table th { padding: 6px 8px; }
+
+/* ===================== Gider yönetimi ===================== */
+
+.filter-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.filter-bar .search { max-width: 260px; }
+.toggle {
+  width: 42px; height: 22px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--card-2); position: relative; cursor: pointer; padding: 0;
+}
+.toggle.on { background: rgba(25, 158, 112, 0.35); border-color: var(--good); }
+.toggle-knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease;
+}
+.toggle.on .toggle-knob { transform: translateX(20px); background: var(--good); }
+.passive-row { opacity: 0.55; }
+.passive-row strong { text-decoration: line-through; }
+.icon-btn.faded { opacity: 0.4; }
+.icon-btn.active { color: var(--accent); }
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+
+/* ===================== Ayarlar ===================== */
+
+.method-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.method-card {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer;
+  background: var(--bg-soft);
+}
+.method-card.checked { border-color: var(--accent); background: var(--accent-soft); }
+.method-card input { display: none; }
+.category-row { display: grid; grid-template-columns: 52px 1.4fr 1fr auto auto; gap: 8px; align-items: center; }
+.color-input { padding: 2px; height: 38px; }
+
+/* ===================== Yazdırma (PDF çıktısı) ===================== */
+
+@media print {
+  body { background: #fff; color: #000; }
+  .no-print, .sidebar, .topbar, .fab, .modal-backdrop, .toast { display: none !important; }
+  .layout { grid-template-columns: 1fr; }
+  .content { padding: 0; }
+  .card { border: 1px solid #ccc; break-inside: avoid; }
+  table { font-size: 10px; }
+  th, td { border-bottom: 1px solid #ddd; }
+  .good { color: #0a7a4a; }
+  .bad { color: #b3261e; }
+}
+
+@media (max-width: 980px) {
+  .topbar { padding: 10px 16px; }
+  .bar-list-row { grid-template-columns: 120px 1fr 100px; }
+  .category-row { grid-template-columns: 52px 1fr; }
+}

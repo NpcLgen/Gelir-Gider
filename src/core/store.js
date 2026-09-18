@@ -4,15 +4,20 @@
  */
 
 import {
+  createCategory,
   createExpense,
+  createPriceEntry,
   createReservation,
   createRoom,
   defaultSettings,
   validateExpense,
+  validatePriceEntry,
   validateReservation,
   validateRoom,
   validateSettings,
 } from './model.js';
+import { defaultFx } from './fx.js';
+import { eachDate, isWeekend, period as makePeriod } from './dates.js';
 import { seedData } from './seed.js';
 
 const STORAGE_KEY = 'gelir-gider:v1';
@@ -33,6 +38,20 @@ function defaultAdapter() {
     /* gizli sekme vb. — belleğe düş */
   }
   return memoryAdapter();
+}
+
+const DAY_MS = 86400000;
+const shiftByDays = (date, days) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+
+const emptyState = () => ({ rooms: [], reservations: [], expenses: [], prices: {}, settings: defaultSettings() });
+
+function mergeSettings(saved) {
+  const base = defaultSettings();
+  return {
+    ...base,
+    ...(saved ?? {}),
+    fx: { ...defaultFx(), ...(saved?.fx ?? {}) },
+  };
 }
 
 export class ValidationError extends Error {
@@ -56,13 +75,14 @@ export function createStore({ adapter = defaultAdapter(), seed = true } = {}) {
           rooms: (parsed.rooms ?? []).map(createRoom),
           reservations: (parsed.reservations ?? []).map(createReservation),
           expenses: (parsed.expenses ?? []).map(createExpense),
-          settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
+          prices: parsed.prices ?? {},
+          settings: mergeSettings(parsed.settings),
         };
       }
     } catch {
       /* bozuk kayıt — demoya dön */
     }
-    return seed ? seedData() : { rooms: [], reservations: [], expenses: [], settings: defaultSettings() };
+    return seed ? seedData() : emptyState();
   }
 
   function persist() {
@@ -100,6 +120,8 @@ export function createStore({ adapter = defaultAdapter(), seed = true } = {}) {
       state.expenses = state.expenses.map((e) =>
         e.roomId === id ? { ...e, roomId: '', amenityKey: '', allocation: e.allocation === 'direct' ? 'general' : e.allocation } : e,
       );
+      const { [id]: _removed, ...restPrices } = state.prices;
+      state.prices = restPrices;
       persist();
     },
     /** Demirbaş kutucuğunu aç/kapat — oda kartındaki checkbox modülü bunu kullanır. */
@@ -146,8 +168,126 @@ export function createStore({ adapter = defaultAdapter(), seed = true } = {}) {
       persist();
       return expense;
     },
+    /** PRD §1.2 — gideri silmeden hesaplamadan çıkar/geri al. */
+    toggleExpense(id) {
+      state.expenses = state.expenses.map((e) => (e.id === id ? { ...e, active: !e.active } : e));
+      persist();
+      return state.expenses.find((e) => e.id === id);
+    },
     deleteExpense(id) {
       state.expenses = state.expenses.filter((e) => e.id !== id);
+      persist();
+    },
+
+    /* --- Fiyat takvimi (PRD §1.1) --- */
+    savePrice(roomId, date, patch) {
+      const entry = createPriceEntry(patch);
+      const errors = validatePriceEntry(entry);
+      if (errors.length) throw new ValidationError(errors);
+      const roomPrices = { ...(state.prices[roomId] ?? {}) };
+      if (entry.amount > 0) roomPrices[date] = entry;
+      else delete roomPrices[date];
+      state.prices = { ...state.prices, [roomId]: roomPrices };
+      persist();
+      return entry;
+    },
+    clearPrice(roomId, date) {
+      const roomPrices = { ...(state.prices[roomId] ?? {}) };
+      delete roomPrices[date];
+      state.prices = { ...state.prices, [roomId]: roomPrices };
+      persist();
+    },
+    /**
+     * Toplu fiyat güncelleme (PRD §1.1 / §6.2).
+     * Hafta içi ve hafta sonu için ayrı tutar verilebilir; `overwrite` kapalıysa
+     * yalnızca boş günler doldurulur.
+     */
+    bulkPrice({ roomIds, from, to, weekdayAmount, weekendAmount, currency = 'TRY', overwrite = true }) {
+      const errors = [];
+      if (!roomIds?.length) errors.push('En az bir oda seçilmelidir.');
+      if (!from || !to || from > to) errors.push('Geçerli bir tarih aralığı seçiniz.');
+      if (!(weekdayAmount > 0) && !(weekendAmount > 0)) errors.push('En az bir fiyat girilmelidir.');
+      if (errors.length) throw new ValidationError(errors);
+
+      let written = 0;
+      const next = { ...state.prices };
+      for (const roomId of roomIds) {
+        const roomPrices = { ...(next[roomId] ?? {}) };
+        for (const date of eachDate(makePeriod(from, to))) {
+          const amount = isWeekend(date) ? weekendAmount : weekdayAmount;
+          if (!(amount > 0)) continue;
+          if (!overwrite && roomPrices[date]?.amount > 0) continue;
+          roomPrices[date] = createPriceEntry({ amount, currency });
+          written += 1;
+        }
+        next[roomId] = roomPrices;
+      }
+      state.prices = next;
+      persist();
+      return written;
+    },
+    /** Fiyatları başka bir tarih aralığından kopyalar (PRD §6.2). */
+    copyPrices({ roomIds, sourceFrom, sourceTo, targetFrom, overwrite = false }) {
+      const sourceDates = eachDate(makePeriod(sourceFrom, sourceTo));
+      if (!sourceDates.length) throw new ValidationError(['Kaynak aralık boş.']);
+      let written = 0;
+      const next = { ...state.prices };
+      for (const roomId of roomIds) {
+        const roomPrices = { ...(next[roomId] ?? {}) };
+        sourceDates.forEach((date, index) => {
+          const source = roomPrices[date];
+          if (!source?.amount) return;
+          const targetDate = shiftByDays(targetFrom, index);
+          if (!overwrite && roomPrices[targetDate]?.amount > 0) return;
+          roomPrices[targetDate] = createPriceEntry(source);
+          written += 1;
+        });
+        next[roomId] = roomPrices;
+      }
+      state.prices = next;
+      persist();
+      return written;
+    },
+
+    /* --- Kategori yöneticisi (PRD §8.3) --- */
+    saveCategory(patch) {
+      const category = createCategory(patch);
+      if (!category.label) throw new ValidationError(['Kategori adı zorunludur.']);
+      const list = state.settings.customCategories ?? [];
+      const index = list.findIndex((c) => c.key === category.key);
+      const next = index >= 0 ? list.map((c) => (c.key === category.key ? category : c)) : [...list, category];
+      state.settings = { ...state.settings, customCategories: next };
+      persist();
+      return category;
+    },
+    deleteCategory(key) {
+      state.settings = {
+        ...state.settings,
+        customCategories: (state.settings.customCategories ?? []).filter((c) => c.key !== key),
+      };
+      persist();
+    },
+
+    /* --- Kur (PRD §2.4) --- */
+    setDisplayCurrency(currency) {
+      state.settings = { ...state.settings, displayCurrency: currency };
+      persist();
+      return currency;
+    },
+    saveFx(patch) {
+      const fx = { ...state.settings.fx, ...patch };
+      if (!(Number(fx.rate) > 0)) throw new ValidationError(['Kur 0’dan büyük olmalıdır.']);
+      state.settings = { ...state.settings, fx };
+      persist();
+      return fx;
+    },
+    /** Belirli bir tarihe kur yazar (geçmiş dönem raporları doğru kalsın diye). */
+    recordRate(date, rate) {
+      const fx = state.settings.fx;
+      state.settings = {
+        ...state.settings,
+        fx: { ...fx, rate, updatedAt: new Date().toISOString(), history: { ...fx.history, [date]: rate } },
+      };
       persist();
     },
 
@@ -163,7 +303,7 @@ export function createStore({ adapter = defaultAdapter(), seed = true } = {}) {
 
     reset({ withSeed = true } = {}) {
       adapter.removeItem(STORAGE_KEY);
-      state = withSeed ? seedData() : { rooms: [], reservations: [], expenses: [], settings: defaultSettings() };
+      state = withSeed ? seedData() : emptyState();
       persist();
     },
     exportJSON: () => JSON.stringify(state, null, 2),
@@ -173,7 +313,8 @@ export function createStore({ adapter = defaultAdapter(), seed = true } = {}) {
         rooms: (parsed.rooms ?? []).map(createRoom),
         reservations: (parsed.reservations ?? []).map(createReservation),
         expenses: (parsed.expenses ?? []).map(createExpense),
-        settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
+        prices: parsed.prices ?? {},
+        settings: mergeSettings(parsed.settings),
       };
       persist();
       return state;

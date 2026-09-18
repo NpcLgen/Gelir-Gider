@@ -2,7 +2,7 @@
 
 import { AMENITY_MAP, ROOM_STATUSES } from '../core/catalog.js';
 import { amenityLoad, bedSummary } from '../core/model.js';
-import { formatDecimal, formatMoney, formatPercent } from '../core/format.js';
+import { formatDecimal, formatPercent } from '../core/format.js';
 import { h } from './dom.js';
 import { openRoomCard } from './roomCard.js';
 
@@ -11,6 +11,7 @@ const statusLabel = (key) => ROOM_STATUSES.find((s) => s.key === key)?.label ?? 
 export function roomsView(app) {
   const { rooms } = app.store.getState();
   const report = app.report();
+  const present = app.present();
 
   return h('div', { class: 'stack' },
     h('div', { class: 'row between center wrap gap' },
@@ -32,17 +33,18 @@ export function roomsView(app) {
             h('span', { class: `pill pill-${room.status}` }, statusLabel(room.status))),
           h('div', { class: 'room-name' }, room.name || 'İsimsiz oda'),
           h('div', { class: 'muted small' }, bedSummary(room)),
-          h('div', { class: 'row gap small muted' },
+          h('div', { class: 'row gap small muted wrap' },
             h('span', {}, `👤 maks. ${room.maxOccupancy} kişi`),
+            room.area ? h('span', {}, `📐 ${room.area} m²`) : null,
             h('span', { title: 'Elektrik dağıtım katsayısı' }, `⚡ ×${formatDecimal(amenityLoad(room, 'electricity'))}`)),
           h('div', { class: 'room-amenities' },
             ...room.amenities.slice(0, 8).map((key) =>
               h('span', { class: 'amenity-dot', title: AMENITY_MAP[key].label }, AMENITY_MAP[key].icon)),
             room.amenities.length > 8 ? h('span', { class: 'amenity-dot' }, `+${room.amenities.length - 8}`) : null),
           row ? h('div', { class: 'room-metrics' },
-            metric('Gelir', formatMoney(row.revenue)),
-            metric('Gider', formatMoney(row.totalCost)),
-            metric('Kâr', formatMoney(row.profit), row.profit >= 0 ? 'good' : 'bad'),
+            metric('Gelir', present.money(row.revenue)),
+            metric('Gider', present.money(row.totalCost)),
+            metric('Kâr', present.money(row.profit), row.profit >= 0 ? 'good' : 'bad'),
             metric('Doluluk', formatPercent(row.occupancyRate))) : null);
       })));
 }

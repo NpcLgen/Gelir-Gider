@@ -14,6 +14,7 @@ import {
   roomLabel,
   serviceableAmenities,
 } from '../core/model.js';
+import { ALLOCATION_METHODS } from '../core/catalog.js';
 import { formatDecimal, formatMoney } from '../core/format.js';
 import { append, clear, confirmDialog, errorList, field, h, openModal, select, toast } from './dom.js';
 
@@ -64,10 +65,14 @@ export function openRoomCard(app, source) {
           type: 'number', value: draft.basePrice, min: '0', step: '50',
           onInput: (e) => { draft.basePrice = Number(e.target.value); renderSummary(summary, draft, app); },
         })),
-        field('Oda Büyüklük Katsayısı', h('input', {
+        field('Oda Büyüklüğü (m²)', h('input', {
+          type: 'number', value: draft.area, min: '0', step: '1',
+          onInput: (e) => { draft.area = Number(e.target.value); renderSummary(summary, draft, app); },
+        }), 'Metrekare bazlı (Seçenek B) dağıtımda kullanılır.'),
+        field('Maliyet Çarpanı', h('input', {
           type: 'number', value: draft.baseWeight, min: '0.1', step: '0.05',
           onInput: (e) => { draft.baseWeight = Number(e.target.value); renderSummary(summary, draft, app); },
-        }), 'Genel giderlerde odanın metrekare/tip ağırlığı (standart oda = 1).'),
+        }), 'Özel katsayı (Seçenek C): standart oda 1,0 · jakuzili oda 1,5 gibi.'),
       );
 
       /* --- 3. Demirbaş & Özellik Listesi --- */
@@ -194,18 +199,22 @@ function renderSummary(container, draft, app) {
   const maxGuests = draft.maxOccupancy || capacity;
   const serviceable = serviceableAmenities(draft);
 
+  const method = settings.allocationMethod ?? 'coefficient';
+  const methodInfo = ALLOCATION_METHODS.find((m) => m.key === method);
   const loadRows = UTILITY_KINDS.map((kind) => {
     const load = amenityLoad(draft, kind);
-    const weight = (draft.baseWeight || 1) * load;
+    const weight = method === 'equal' ? 1
+      : method === 'area' ? (draft.area > 0 ? draft.area : 1)
+        : (draft.baseWeight || 1) * load;
     return h('div', { class: 'kv' },
       h('span', {}, UTILITY_LABELS[kind]),
-      h('strong', { title: `${formatDecimal(draft.baseWeight || 1)} (büyüklük) × ${formatDecimal(load)} (demirbaş)` },
-        `×${formatDecimal(weight)}`));
+      h('strong', { title: `${formatDecimal(draft.baseWeight || 1)} (çarpan) × ${formatDecimal(load)} (demirbaş)` },
+        method === 'area' ? `${formatDecimal(weight)} m²` : `×${formatDecimal(weight)}`));
   });
 
   append(container, [
     h('h3', {}, '📊 Maliyet Etkisi'),
-    h('p', { class: 'muted small' }, 'Bu kart kaydedildiğinde dağıtım motoru aşağıdaki katsayıları kullanır.'),
+    h('p', { class: 'muted small' }, `Aktif yöntem: ${methodInfo?.label ?? method}. Dağıtım motoru aşağıdaki ağırlıkları kullanır.`),
     h('div', { class: 'kv-list' }, ...loadRows),
     h('hr'),
     h('div', { class: 'kv' }, h('span', {}, 'Maksimum kapasite'), h('strong', {}, `${maxGuests} kişi`)),

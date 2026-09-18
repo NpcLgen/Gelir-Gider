@@ -1,23 +1,37 @@
 /**
- * Maliyet dağıtım motoru.
+ * Maliyet dağıtım motoru ve finansal metrikler.
  *
- * Üç katmanlı dağıtım yapar:
- *  1) Doğrudan giderler        → ilgili odaya %100 (ör. jakuzi motor arızası → 101)
- *  2) Kişi başı sarfiyat       → kişi-gece sayısına göre (kahvaltı, su, buklet...)
- *     a) manuel girilen "perGuest" giderleri (toplam tutar paylaştırılır)
- *     b) kişi başı tarife (Cost Per Guest) ile otomatik üretilen sarfiyat
- *  3) Genel giderler           → demirbaş katsayısı × oda büyüklüğü × doluluk ağırlığı
+ * Dağıtım katmanları:
+ *  1) Doğrudan giderler    → ilgili odaya %100 (ör. jakuzi motor arızası → 101)
+ *  2) Kişi başı sarfiyat   → kişi-gece sayısına göre (kahvaltı, su, buklet…)
+ *     a) manuel `perGuest` giderleri, b) kişi başı tarife (Cost Per Guest)
+ *  3) Genel giderler       → PRD §8.1'deki yönteme göre (A eşit / B m² / C özel katsayı)
  *
  * Ağırlık formülü (genel gider dağıtımı):
- *   w(oda, tür) = baseWeight × (1 + Σ demirbaş katsayıları[tür])
- *                            × (fixedShare + (1 − fixedShare) × doluluk oranı)
+ *   w(oda, tür) = yöntemAğırlığı(oda, tür) × (fixedShare + (1 − fixedShare) × doluluk)
  *
- * `fixedShare`, boş odaların da üstlendiği sabit payı temsil eder (varsayılan 0.25).
+ * Tüm tutarlar hesaba TRY (baz para birimi) olarak girer; EUR kalemler kendi
+ * tarihlerindeki kurla çevrilir (PRD §2.4 — gerçekleşen kâr/zarar).
  */
 
-import { UTILITY_KINDS } from './catalog.js';
-import { daysInPeriod, isValidDate, overlapNights, period as makePeriod, toTime } from './dates.js';
-import { amenityLoad, reservationNights } from './model.js';
+import { BASE_CURRENCY, EXPENSE_GROUPS, UTILITY_KINDS } from './catalog.js';
+import {
+  addDays,
+  daysInPeriod,
+  eachDate,
+  isValidDate,
+  overlapNights,
+  period as makePeriod,
+  toTime,
+} from './dates.js';
+import { rateFor, toBase } from './fx.js';
+import {
+  amenityLoad,
+  defaultSettings,
+  expenseGroup,
+  isWriteOff,
+  reservationNights,
+} from './model.js';
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -79,9 +93,49 @@ export function tariffLinesFor(reservation, p, settings) {
   return lines;
 }
 
+/**
+ * Pasif giderleri eler, tekrarlayan giderleri (abonelikleri) dönem içinde
+ * gerçek kalemler hâline getirir ve tutarları baz para birimine çevirir.
+ * PRD §1.2 (aktif/pasif) ve §2.3 (tekrarlayan giderler).
+ */
+export function expandExpenses(expenses, p, settings) {
+  const fx = settings.fx;
+  const out = [];
+  const push = (expense, date) => {
+    out.push({
+      ...expense,
+      date,
+      occurrenceId: date === expense.date ? expense.id : `${expense.id}@${date}`,
+      generated: date !== expense.date,
+      amountBase: round2(toBase(expense.amount, expense.currency, rateFor(fx, date))),
+      group: expenseGroup(expense),
+    });
+  };
+
+  for (const expense of expenses) {
+    if (expense.active === false) continue;
+    if (!isValidDate(expense.date)) continue;
+
+    if (!expense.recurring?.enabled) {
+      if (inPeriod(expense.date, p)) push(expense, expense.date);
+      continue;
+    }
+
+    const day = String(expense.recurring.dayOfMonth).padStart(2, '0');
+    for (const date of eachDate(p)) {
+      if (!date.endsWith(`-${day}`)) continue;
+      if (date < expense.date) continue; // abonelik başlangıcından önce yansımaz
+      if (expense.recurring.until && date > expense.recurring.until) continue;
+      push(expense, date);
+    }
+  }
+  return out;
+}
+
 /** Odaların dönem içi doluluk, gelir ve kişi-gece istatistikleri. */
 export function buildRoomActivity(rooms, reservations, p, settings) {
   const days = daysInPeriod(p);
+  const fx = settings.fx;
   const activity = new Map();
   for (const room of rooms) {
     activity.set(room.id, {
@@ -90,6 +144,7 @@ export function buildRoomActivity(rooms, reservations, p, settings) {
       guestNights: 0,
       stays: 0,
       revenue: 0,
+      commission: 0,
       occupancyRate: 0,
       tariffLines: [],
       tariffCost: 0,
@@ -107,8 +162,12 @@ export function buildRoomActivity(rooms, reservations, p, settings) {
     entry.roomNights += nights;
     entry.guestNights += nights * guests;
     if (inPeriod(reservation.checkIn, p)) entry.stays += 1;
+
     // Gelir, konaklama gecelerine eşit yayılır; sadece döneme düşen kısım sayılır.
-    entry.revenue += totalNights > 0 ? (reservation.totalAmount * nights) / totalNights : 0;
+    const gross = toBase(reservation.totalAmount, reservation.currency, rateFor(fx, reservation.checkIn));
+    const share = totalNights > 0 ? (gross * nights) / totalNights : 0;
+    entry.revenue += share;
+    entry.commission += share * ((reservation.commissionRate || 0) / 100);
 
     for (const line of tariffLinesFor(reservation, p, settings)) {
       entry.tariffLines.push({ ...line, reservationId: reservation.id, guestName: reservation.guestName });
@@ -118,19 +177,62 @@ export function buildRoomActivity(rooms, reservations, p, settings) {
 
   for (const entry of activity.values()) {
     entry.revenue = round2(entry.revenue);
+    entry.commission = round2(entry.commission);
     entry.tariffCost = round2(entry.tariffCost);
     entry.occupancyRate = days > 0 ? entry.roomNights / days : 0;
   }
   return activity;
 }
 
-/** Bir odanın genel gider dağıtım ağırlığı. */
-export function utilityWeight(room, kind, occupancyRate, fixedShare) {
-  if (room.status === 'passive') return 0;
+/** PRD §8.1 — seçili yönteme göre odanın ham dağıtım ağırlığı. */
+export function methodWeight(room, kind, method) {
+  if (method === 'equal') return 1;
+  if (method === 'area') return room.area > 0 ? room.area : 1;
   const base = room.baseWeight > 0 ? room.baseWeight : 1;
+  return base * amenityLoad(room, kind);
+}
+
+/** Odanın genel gider dağıtım ağırlığı (doluluk etkisi dâhil). */
+export function utilityWeight(room, kind, occupancyRate, fixedShare, method = 'coefficient') {
+  if (room.status === 'passive') return 0;
   const share = Math.min(1, Math.max(0, fixedShare));
   const occupancyFactor = share + (1 - share) * Math.min(1, Math.max(0, occupancyRate));
-  return base * amenityLoad(room, kind) * occupancyFactor;
+  return methodWeight(room, kind, method) * occupancyFactor;
+}
+
+/** Fiyat takviminden dönem içi beklenen (projeksiyon) geliri hesaplar. */
+export function projectedRevenue(rooms, prices, p, settings) {
+  const fx = settings.fx;
+  const dates = eachDate(p);
+  const byRoom = new Map();
+  let total = 0;
+  let filledDays = 0;
+  let missingDays = 0;
+
+  for (const room of rooms) {
+    if (room.status === 'passive') continue;
+    let roomTotal = 0;
+    let filled = 0;
+    for (const date of dates) {
+      const entry = prices?.[room.id]?.[date];
+      if (entry && entry.amount > 0) {
+        roomTotal += toBase(entry.amount, entry.currency, rateFor(fx, date));
+        filled += 1;
+      }
+    }
+    filledDays += filled;
+    missingDays += dates.length - filled;
+    byRoom.set(room.id, { total: round2(roomTotal), filled, missing: dates.length - filled });
+    total += roomTotal;
+  }
+
+  return {
+    total: round2(total),
+    byRoom,
+    filledDays,
+    missingDays,
+    coverage: filledDays + missingDays > 0 ? filledDays / (filledDays + missingDays) : 0,
+  };
 }
 
 const emptyCosts = () => ({
@@ -142,12 +244,14 @@ const emptyCosts = () => ({
 });
 
 /**
- * Dönem raporunu üretir.
- * @returns {{period, rooms: Array, totals: Object, unallocated: Object}}
+ * Dönem raporunu üretir. Tüm tutarlar baz para biriminde (TRY) döner.
+ * @returns {{period, rooms: Array, totals: Object, unallocated: Object, byGroup: Object}}
  */
-export function buildReport({ rooms = [], reservations = [], expenses = [], settings, period: p }) {
-  const activity = buildRoomActivity(rooms, reservations, p, settings);
-  const fixedShare = settings.fixedShare ?? 0.25;
+export function buildReport({ rooms = [], reservations = [], expenses = [], prices = {}, settings, period: p }) {
+  const cfg = { ...defaultSettings(), ...(settings ?? {}) };
+  const activity = buildRoomActivity(rooms, reservations, p, cfg);
+  const fixedShare = cfg.fixedShare ?? 0.25;
+  const method = cfg.allocationMethod ?? 'coefficient';
   const result = new Map();
 
   for (const room of rooms) {
@@ -155,32 +259,47 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], sett
     result.set(room.id, {
       room,
       revenue: entry.revenue,
+      commission: entry.commission,
       roomNights: entry.roomNights,
       guestNights: entry.guestNights,
       stays: entry.stays,
       occupancyRate: entry.occupancyRate,
       costs: emptyCosts(),
+      writeOff: 0,
       weights: Object.fromEntries(
-        UTILITY_KINDS.map((kind) => [kind, utilityWeight(room, kind, entry.occupancyRate, fixedShare)]),
+        UTILITY_KINDS.map((kind) => [kind, utilityWeight(room, kind, entry.occupancyRate, fixedShare, method)]),
       ),
       amenityLoads: Object.fromEntries(UTILITY_KINDS.map((kind) => [kind, amenityLoad(room, kind)])),
       lines: entry.tariffLines.map((line) => ({
         source: 'tariff',
         label: `${line.label} (${line.units} × ${line.unitAmount})`,
         amount: line.amount,
+        group: 'operational',
       })),
     });
     result.get(room.id).costs.tariff = entry.tariffCost;
   }
 
   const unallocated = { general: 0, undistributed: 0, items: [] };
-  const periodExpenses = expenses.filter((e) => inPeriod(e.date, p));
+  const byGroup = Object.fromEntries(EXPENSE_GROUPS.map((g) => [g.key, 0]));
+  const byCategory = {};
+  const periodExpenses = expandExpenses(expenses, p, cfg);
   const activeRooms = rooms.filter((r) => r.status === 'active');
   const totalGuestNights = [...activity.values()].reduce((sum, e) => sum + e.guestNights, 0);
+  let writeOffTotal = 0;
+
+  const note = (expense) => {
+    byGroup[expense.group] = round2((byGroup[expense.group] ?? 0) + expense.amountBase);
+    byCategory[expense.category] = round2((byCategory[expense.category] ?? 0) + expense.amountBase);
+    if (isWriteOff(expense)) writeOffTotal = round2(writeOffTotal + expense.amountBase);
+  };
 
   for (const expense of periodExpenses) {
+    note(expense);
+    const amount = expense.amountBase;
+
     if (expense.allocation === 'general') {
-      unallocated.general = round2(unallocated.general + expense.amount);
+      unallocated.general = round2(unallocated.general + amount);
       unallocated.items.push({ ...expense, reason: 'İşletme geneli' });
       continue;
     }
@@ -188,12 +307,15 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], sett
     if (expense.allocation === 'direct') {
       const target = result.get(expense.roomId);
       if (!target) {
-        unallocated.undistributed = round2(unallocated.undistributed + expense.amount);
+        unallocated.undistributed = round2(unallocated.undistributed + amount);
         unallocated.items.push({ ...expense, reason: 'Oda bulunamadı' });
         continue;
       }
-      target.costs.direct = round2(target.costs.direct + expense.amount);
-      target.lines.push({ source: 'direct', label: expense.description, amount: expense.amount, expenseId: expense.id });
+      target.costs.direct = round2(target.costs.direct + amount);
+      if (isWriteOff(expense)) target.writeOff = round2(target.writeOff + amount);
+      target.lines.push({
+        source: 'direct', label: expense.description, amount, expenseId: expense.id, group: expense.group,
+      });
       continue;
     }
 
@@ -204,7 +326,7 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], sett
       targets = rooms;
       weights = rooms.map((room) => activity.get(room.id).guestNights);
       if (totalGuestNights <= 0) {
-        unallocated.undistributed = round2(unallocated.undistributed + expense.amount);
+        unallocated.undistributed = round2(unallocated.undistributed + amount);
         unallocated.items.push({ ...expense, reason: 'Dönemde konaklama yok' });
         continue;
       }
@@ -222,12 +344,12 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], sett
     }
 
     if (!targets.length || weights.every((w) => w <= 0)) {
-      unallocated.undistributed = round2(unallocated.undistributed + expense.amount);
+      unallocated.undistributed = round2(unallocated.undistributed + amount);
       unallocated.items.push({ ...expense, reason: 'Dağıtılacak oda yok' });
       continue;
     }
 
-    const shares = splitByWeights(expense.amount, weights);
+    const shares = splitByWeights(amount, weights);
     targets.forEach((room, index) => {
       const share = shares[index];
       if (!share) return;
@@ -239,36 +361,50 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], sett
       } else {
         target.costs[expense.allocation] = round2(target.costs[expense.allocation] + share);
       }
+      if (isWriteOff(expense)) target.writeOff = round2(target.writeOff + share);
       target.lines.push({
-        source: expense.allocation,
-        label: expense.description,
-        amount: share,
-        expenseId: expense.id,
+        source: expense.allocation, label: expense.description, amount: share, expenseId: expense.id, group: expense.group,
       });
     });
   }
+
+  // Tarife sarfiyatı operasyonel gider grubuna eklenir (pasta grafik bütünlüğü).
+  const tariffTotal = [...result.values()].reduce((sum, row) => sum + row.costs.tariff, 0);
+  byGroup.operational = round2((byGroup.operational ?? 0) + tariffTotal);
+  if (tariffTotal > 0) byCategory.perGuestTariff = round2(tariffTotal);
+
+  const projection = projectedRevenue(rooms, prices, p, cfg);
 
   const roomRows = [...result.values()].map((row) => {
     const weightedTotal = UTILITY_KINDS.reduce((sum, kind) => sum + row.costs.weighted[kind], 0);
     const totalCost = round2(
       row.costs.direct + row.costs.perGuest + row.costs.tariff + row.costs.equal + weightedTotal,
     );
-    const profit = round2(row.revenue - totalCost);
+    const netRevenue = round2(row.revenue - row.commission);
+    const profit = round2(netRevenue - totalCost);
+    const projected = projection.byRoom.get(row.room.id);
     return {
       ...row,
+      netRevenue,
       weightedTotal: round2(weightedTotal),
       totalCost,
       profit,
-      margin: row.revenue > 0 ? profit / row.revenue : 0,
+      margin: netRevenue > 0 ? profit / netRevenue : 0,
       costPerGuestNight: row.guestNights > 0 ? round2(totalCost / row.guestNights) : 0,
       revenuePerGuestNight: row.guestNights > 0 ? round2(row.revenue / row.guestNights) : 0,
       adr: row.roomNights > 0 ? round2(row.revenue / row.roomNights) : 0,
+      revpar: daysInPeriod(p) > 0 && row.room.status !== 'passive'
+        ? round2(row.revenue / daysInPeriod(p))
+        : 0,
+      projectedRevenue: projected?.total ?? 0,
+      missingPriceDays: projected?.missing ?? 0,
     };
   });
 
   const totals = roomRows.reduce(
     (acc, row) => {
       acc.revenue = round2(acc.revenue + row.revenue);
+      acc.commission = round2(acc.commission + row.commission);
       acc.totalCost = round2(acc.totalCost + row.totalCost);
       acc.direct = round2(acc.direct + row.costs.direct);
       acc.perGuest = round2(acc.perGuest + row.costs.perGuest);
@@ -279,20 +415,91 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], sett
       acc.roomNights += row.roomNights;
       return acc;
     },
-    { revenue: 0, totalCost: 0, direct: 0, perGuest: 0, tariff: 0, equal: 0, weighted: 0, guestNights: 0, roomNights: 0 },
+    {
+      revenue: 0, commission: 0, totalCost: 0, direct: 0, perGuest: 0, tariff: 0,
+      equal: 0, weighted: 0, guestNights: 0, roomNights: 0,
+    },
   );
 
-  totals.generalExpenses = round2(unallocated.general + unallocated.undistributed);
-  totals.grossProfit = round2(totals.revenue - totals.totalCost);
-  totals.netProfit = round2(totals.grossProfit - totals.generalExpenses);
-  totals.margin = totals.revenue > 0 ? totals.netProfit / totals.revenue : 0;
-  totals.occupancyRate = (() => {
-    const capacity = rooms.filter((r) => r.status !== 'passive').length * daysInPeriod(p);
-    return capacity > 0 ? totals.roomNights / capacity : 0;
-  })();
-  totals.costPerGuestNight = totals.guestNights > 0 ? round2(totals.totalCost / totals.guestNights) : 0;
+  const days = daysInPeriod(p);
+  const sellableRooms = rooms.filter((r) => r.status !== 'passive').length;
+  const availableRoomNights = sellableRooms * days;
 
-  return { period: p, rooms: roomRows, totals, unallocated };
+  totals.netRevenue = round2(totals.revenue - totals.commission);
+  totals.generalExpenses = round2(unallocated.general + unallocated.undistributed);
+  totals.grossProfit = round2(totals.netRevenue - totals.totalCost);
+  totals.netProfit = round2(totals.grossProfit - totals.generalExpenses);
+  totals.expenses = round2(totals.totalCost + totals.generalExpenses);
+  totals.margin = totals.netRevenue > 0 ? totals.netProfit / totals.netRevenue : 0;
+  totals.occupancyRate = availableRoomNights > 0 ? totals.roomNights / availableRoomNights : 0;
+  totals.availableRoomNights = availableRoomNights;
+  totals.costPerGuestNight = totals.guestNights > 0 ? round2(totals.totalCost / totals.guestNights) : 0;
+  totals.adr = totals.roomNights > 0 ? round2(totals.revenue / totals.roomNights) : 0;
+  totals.revpar = availableRoomNights > 0 ? round2(totals.revenue / availableRoomNights) : 0;
+  totals.writeOff = writeOffTotal;
+  totals.projectedRevenue = projection.total;
+  totals.priceCoverage = projection.coverage;
+  totals.missingPriceDays = projection.missingDays;
+  totals.targetMargin = cfg.targetMargin ?? 0;
+  totals.targetMet = totals.margin >= (cfg.targetMargin ?? 0);
+
+  return {
+    period: p,
+    currency: BASE_CURRENCY,
+    rooms: roomRows,
+    totals,
+    unallocated,
+    byGroup,
+    byCategory,
+    expenses: periodExpenses,
+    breakEven: breakEven({ totals, byGroup, availableRoomNights }),
+  };
 }
 
-export { makePeriod as period };
+/**
+ * Başa baş noktası (PRD §3.2).
+ * Sabit giderler, satılan oda-gecesi başına değişken maliyet ve mevcut ADR üzerinden
+ * "zarar etmemek için gereken doluluk" ve "gereken minimum fiyat" hesaplanır.
+ */
+export function breakEven({ totals, byGroup, availableRoomNights }) {
+  const fixedCost = round2(byGroup.fixed ?? 0);
+  const variableCost = round2((byGroup.variable ?? 0) + (byGroup.operational ?? 0) + (byGroup.marketing ?? 0));
+  const soldNights = totals.roomNights;
+  const variablePerNight = soldNights > 0 ? round2(variableCost / soldNights) : 0;
+  const adr = totals.adr;
+  const contribution = round2(adr - variablePerNight);
+
+  const requiredNights = contribution > 0 ? fixedCost / contribution : null;
+  return {
+    fixedCost,
+    variableCost,
+    variablePerNight,
+    contributionPerNight: contribution,
+    requiredRoomNights: requiredNights == null ? null : Math.ceil(requiredNights),
+    requiredOccupancy: requiredNights != null && availableRoomNights > 0
+      ? requiredNights / availableRoomNights
+      : null,
+    /** Mevcut dolulukta zarar etmemek için gereken minimum ortalama gece fiyatı. */
+    requiredAdr: soldNights > 0 ? round2((fixedCost + variableCost) / soldNights) : null,
+  };
+}
+
+/** İki dönemin karşılaştırması (PRD §3.2 — YOY). */
+export function compareReports(current, previous) {
+  const delta = (a, b) => ({
+    current: a,
+    previous: b,
+    change: round2(a - b),
+    ratio: b !== 0 ? (a - b) / Math.abs(b) : null,
+  });
+  return {
+    revenue: delta(current.totals.revenue, previous.totals.revenue),
+    expenses: delta(current.totals.expenses, previous.totals.expenses),
+    netProfit: delta(current.totals.netProfit, previous.totals.netProfit),
+    occupancyRate: delta(current.totals.occupancyRate, previous.totals.occupancyRate),
+    adr: delta(current.totals.adr, previous.totals.adr),
+    revpar: delta(current.totals.revpar, previous.totals.revpar),
+  };
+}
+
+export { makePeriod as period, addDays };

@@ -4,18 +4,31 @@
  */
 
 import {
-  AMENITY_MAP,
   ALLOCATION_MAP,
+  ALLOCATION_METHODS,
+  AMENITY_MAP,
+  BASE_CURRENCY,
   BED_TYPE_MAP,
+  CURRENCY_KEYS,
+  EXPENSE_CATEGORIES,
   EXPENSE_CATEGORY_MAP,
+  EXPENSE_GROUPS,
+  FX_SOURCES,
   ROOM_STATUSES,
   TARIFF_BASIS,
   UTILITY_KINDS,
+  WRITE_OFF_CATEGORIES,
 } from './catalog.js';
 import { isValidDate, nightsBetween } from './dates.js';
+import { defaultFx } from './fx.js';
 
 const STATUS_KEYS = ROOM_STATUSES.map((s) => s.key);
 const BASIS_KEYS = TARIFF_BASIS.map((b) => b.key);
+const METHOD_KEYS = ALLOCATION_METHODS.map((m) => m.key);
+const EXPENSE_GROUP_KEYS = EXPENSE_GROUPS.map((g) => g.key);
+const FX_SOURCE_KEYS = FX_SOURCES.map((f) => f.key);
+
+export const currencyOf = (value) => (CURRENCY_KEYS.includes(value) ? value : BASE_CURRENCY);
 
 export function uid(prefix = 'id') {
   const rnd =
@@ -42,8 +55,12 @@ export function createRoom(patch = {}) {
     beds: normalizeBeds(patch.beds),
     maxOccupancy: num(patch.maxOccupancy, 0),
     amenities: normalizeAmenities(patch.amenities),
+    /** PRD §8.1 Seçenek B — metrekare bazlı dağıtım için oda büyüklüğü. */
+    area: num(patch.area, 0),
+    /** PRD §8.1 Seçenek C — odaya elle atanan maliyet çarpanı. */
     baseWeight: patch.baseWeight == null ? 1 : num(patch.baseWeight, 1),
     basePrice: num(patch.basePrice, 0),
+    baseCurrency: currencyOf(patch.baseCurrency),
     notes: String(patch.notes ?? ''),
   };
 }
@@ -119,7 +136,8 @@ export function validateRoom(room, { rooms = [] } = {}) {
       `Maksimum kişi sayısı (${max}), yatak kapasitesini (${capacity}) aşamaz. Önce yatak ekleyin.`,
     );
   }
-  if (num(room.baseWeight, 1) <= 0) errors.push('Oda büyüklük katsayısı 0’dan büyük olmalıdır.');
+  if (num(room.baseWeight, 1) <= 0) errors.push('Maliyet çarpanı 0’dan büyük olmalıdır.');
+  if (num(room.area, 0) < 0) errors.push('Oda metrekaresi negatif olamaz.');
   if (num(room.basePrice, 0) < 0) errors.push('Liste fiyatı negatif olamaz.');
   return errors;
 }
@@ -135,6 +153,9 @@ export function createReservation(patch = {}) {
     checkIn: patch.checkIn || '',
     checkOut: patch.checkOut || '',
     totalAmount: num(patch.totalAmount, 0),
+    currency: currencyOf(patch.currency),
+    /** Acenta komisyon oranı (%) — net gelir hesabında düşülür. */
+    commissionRate: Math.min(100, Math.max(0, num(patch.commissionRate, 0))),
     channel: patch.channel || 'direct',
     breakfastIncluded: patch.breakfastIncluded !== false,
     status: patch.status === 'cancelled' ? 'cancelled' : 'confirmed',
@@ -209,6 +230,9 @@ export function createExpense(patch = {}) {
     category,
     description: String(patch.description ?? '').trim(),
     amount: num(patch.amount, 0),
+    currency: currencyOf(patch.currency),
+    /** PRD §1.2 — pasif gider silinmez, yalnızca hesaplamadan düşer. */
+    active: patch.active !== false,
     allocation: ALLOCATION_MAP[patch.allocation] ? patch.allocation : defaults.allocation,
     weightKind: UTILITY_KINDS.includes(patch.weightKind)
       ? patch.weightKind
@@ -216,14 +240,50 @@ export function createExpense(patch = {}) {
     roomId: patch.roomId || '',
     amenityKey: AMENITY_MAP[patch.amenityKey] ? patch.amenityKey : '',
     vendor: String(patch.vendor ?? '').trim(),
+    /** PRD §2.3 / §6.3 — tekrarlayan gider (abonelik) tanımı. */
+    recurring: normalizeRecurring(patch.recurring),
+    /** PRD §6.3 — dekont/fiş eki: { name, type, dataUrl }. */
+    attachment: patch.attachment?.dataUrl
+      ? {
+        name: String(patch.attachment.name ?? 'dekont'),
+        type: String(patch.attachment.type ?? ''),
+        dataUrl: String(patch.attachment.dataUrl),
+      }
+      : null,
   };
 }
+
+export function normalizeRecurring(recurring) {
+  if (!recurring?.enabled) return { enabled: false, dayOfMonth: 1, until: '' };
+  const day = Math.min(28, Math.max(1, Math.round(num(recurring.dayOfMonth, 1))));
+  return {
+    enabled: true,
+    dayOfMonth: day,
+    until: isValidDate(recurring.until) ? recurring.until : '',
+  };
+}
+
+/** Giderin ait olduğu ana grup (sabit / değişken / operasyonel / pazarlama). */
+export const expenseGroup = (expense) => EXPENSE_CATEGORY_MAP[expense?.category]?.group ?? 'variable';
+
+/** Zayi ve amortisman kalemleri ayrı raporlanır. */
+export const isWriteOff = (expense) => WRITE_OFF_CATEGORIES.includes(expense?.category);
 
 export function validateExpense(expense, { rooms = [] } = {}) {
   const errors = [];
   if (!isValidDate(expense.date)) errors.push('Geçerli bir gider tarihi giriniz.');
   if (!String(expense.description ?? '').trim()) errors.push('Gider açıklaması zorunludur.');
   if (num(expense.amount, 0) <= 0) errors.push('Tutar 0’dan büyük olmalıdır.');
+  if (!CURRENCY_KEYS.includes(expense.currency)) errors.push('Geçersiz para birimi.');
+  if (expense.recurring?.enabled) {
+    const day = num(expense.recurring.dayOfMonth, 0);
+    if (!Number.isInteger(day) || day < 1 || day > 28) {
+      errors.push('Tekrarlama günü 1 ile 28 arasında olmalıdır.');
+    }
+    if (expense.recurring.until && !isValidDate(expense.recurring.until)) {
+      errors.push('Tekrarlama bitiş tarihi geçersiz.');
+    }
+  }
   const allocation = ALLOCATION_MAP[expense.allocation];
   if (!allocation) {
     errors.push('Geçersiz dağıtım yöntemi.');
@@ -247,6 +307,30 @@ export function validateExpense(expense, { rooms = [] } = {}) {
   return errors;
 }
 
+/* ------------------------------------------------- Fiyat takvimi (gelir) -- */
+
+/**
+ * Günlük fiyat kaydı (PRD §1.1). Takvim, `prices[roomId][date]` sözlüğü olarak tutulur.
+ * `amount` o gecenin hedef/liste fiyatıdır, gelir projeksiyonunun kaynağıdır.
+ */
+export function createPriceEntry(patch = {}) {
+  return {
+    amount: num(patch.amount, 0),
+    currency: currencyOf(patch.currency),
+  };
+}
+
+export function validatePriceEntry(entry) {
+  const errors = [];
+  if (num(entry.amount, -1) < 0) errors.push('Fiyat negatif olamaz.');
+  if (!CURRENCY_KEYS.includes(entry.currency)) errors.push('Geçersiz para birimi.');
+  return errors;
+}
+
+export function getPrice(prices, roomId, date) {
+  return prices?.[roomId]?.[date] ?? null;
+}
+
 /* -------------------------------------------------------------- Ayarlar -- */
 
 export function createTariffItem(patch = {}) {
@@ -262,7 +346,14 @@ export function createTariffItem(patch = {}) {
 
 export function defaultSettings() {
   return {
-    currency: 'TRY',
+    /** Görüntüleme para birimi (PRD §6.1 kur anahtarı). */
+    displayCurrency: BASE_CURRENCY,
+    /** PRD §2.4 — kur kaynağı ve geçmişi. */
+    fx: defaultFx(),
+    /** PRD §8.1 — genel gider dağıtım yöntemi: equal | area | coefficient. */
+    allocationMethod: 'coefficient',
+    /** PRD §8.2 — hedeflenen minimum net kâr marjı. */
+    targetMargin: 0.35,
     /** Boş odaların genel giderden aldığı sabit pay oranı (0..1). */
     fixedShare: 0.25,
     /** Kişi başı sarfiyat tarifesi — "Cost Per Guest" algoritmasının girdisi. */
@@ -273,13 +364,55 @@ export function defaultSettings() {
       createTariffItem({ key: 'linen', label: 'Nevresim / Çamaşır', amount: 35, basis: 'guestStay' }),
       createTariffItem({ key: 'cleaning', label: 'Çıkış Temizliği', amount: 90, basis: 'stay' }),
     ],
+    /** PRD §8.3 — kullanıcı tanımlı ek gider kategorileri. */
+    customCategories: [],
   };
+}
+
+/** PRD §8.3 — kullanıcı tanımlı kategori. */
+export function createCategory(patch = {}) {
+  return {
+    key: patch.key || uid('cat'),
+    label: String(patch.label ?? '').trim(),
+    group: EXPENSE_GROUP_KEYS.includes(patch.group) ? patch.group : 'variable',
+    color: String(patch.color ?? '#7c9cff'),
+    allocation: ALLOCATION_MAP[patch.allocation] ? patch.allocation : 'general',
+    archived: Boolean(patch.archived),
+  };
+}
+
+/** Yerleşik + kullanıcı kategorilerinin birleşik listesi. */
+export function allCategories(settings) {
+  const custom = (settings?.customCategories ?? []).filter((c) => !c.archived).map((c) => ({
+    key: c.key,
+    label: c.label,
+    group: c.group,
+    color: c.color,
+    custom: true,
+    defaults: { allocation: c.allocation },
+  }));
+  return [...EXPENSE_CATEGORIES, ...custom];
+}
+
+export function categoryOf(settings, key) {
+  return allCategories(settings).find((c) => c.key === key) ?? EXPENSE_CATEGORY_MAP.other;
 }
 
 export function validateSettings(settings) {
   const errors = [];
   const share = num(settings.fixedShare, -1);
   if (share < 0 || share > 1) errors.push('Sabit pay oranı 0 ile 1 arasında olmalıdır.');
+  if (!METHOD_KEYS.includes(settings.allocationMethod)) errors.push('Geçersiz gider dağıtım yöntemi.');
+  const target = num(settings.targetMargin, -1);
+  if (target < 0 || target > 1) errors.push('Hedef kâr marjı 0 ile 1 arasında olmalıdır.');
+  if (!CURRENCY_KEYS.includes(settings.displayCurrency)) errors.push('Geçersiz görüntüleme para birimi.');
+  if (settings.fx) {
+    if (!FX_SOURCE_KEYS.includes(settings.fx.source)) errors.push('Geçersiz kur kaynağı.');
+    if (num(settings.fx.rate, 0) <= 0) errors.push('Kur 0’dan büyük olmalıdır.');
+  }
+  for (const category of settings.customCategories ?? []) {
+    if (!String(category.label ?? '').trim()) errors.push('Kategori adı boş olamaz.');
+  }
   for (const item of settings.perGuestTariff ?? []) {
     if (!String(item.label ?? '').trim()) errors.push('Tarife kaleminin adı boş olamaz.');
     if (num(item.amount, -1) < 0) errors.push(`"${item.label}" tutarı negatif olamaz.`);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { ValidationError, createStore } from '../src/core/store.js';
 import { seedData } from '../src/core/seed.js';
+import { validateRoom } from '../src/core/model.js';
 import { buildReport } from '../src/core/costEngine.js';
 import { monthPeriod } from '../src/core/dates.js';
 
@@ -86,15 +87,88 @@ test('dışa/içe aktarım durumu korur', () => {
   assert.equal(fresh.getState().rooms[0].number, '101');
 });
 
-test('demo verisi tutarlıdır ve rapor üretir', () => {
+test('demo verisi 9 oda ile tutarlıdır ve rapor üretir', () => {
   const data = seedData(new Date('2026-04-15T00:00:00Z'));
   const store = newStore();
-  for (const room of data.rooms) assert.deepEqual([], store.saveRoom(room) && []);
+  for (const room of data.rooms) assert.deepEqual(validateRoom(room, { rooms: [] }), []);
+  assert.equal(data.rooms.length, 9); // PRD: 9 odalı butik otel
+
   const report = buildReport({ ...data, period: monthPeriod('2026-04') });
   assert.equal(report.rooms.length, data.rooms.length);
   assert.ok(report.totals.revenue > 0);
   assert.ok(report.totals.totalCost > 0);
-  const expenseTotal = data.expenses.reduce((s, e) => s + e.amount, 0);
+  assert.ok(report.totals.projectedRevenue > 0, 'takvim fiyatlarından projeksiyon üretilmeli');
+
+  // Dağıtılan + işletme geneli = dönem içinde gerçekleşen giderlerin tamamı
+  // (pasif giderler hariç, tekrarlayanlar dâhil, EUR kalemler çevrilmiş).
+  const periodExpenseTotal = report.expenses.reduce((sum, e) => sum + e.amountBase, 0);
   const allocated = report.totals.direct + report.totals.perGuest + report.totals.equal + report.totals.weighted;
-  assert.equal(Math.round((allocated + report.totals.generalExpenses) * 100) / 100, expenseTotal);
+  assert.equal(
+    Math.round((allocated + report.totals.generalExpenses) * 100) / 100,
+    Math.round(periodExpenseTotal * 100) / 100,
+  );
+
+  // Pasif gider hiçbir kalemde görünmemeli.
+  assert.ok(!report.expenses.some((e) => e.description.includes('pasif')));
+});
+
+test('fiyat takvimi: toplu güncelleme hafta içi/hafta sonu ayrımı yapar', () => {
+  const store = newStore();
+  const room = store.saveRoom({ number: '101', beds: [{ type: 'double', count: 1 }], maxOccupancy: 2 });
+  const written = store.bulkPrice({
+    roomIds: [room.id], from: '2026-03-02', to: '2026-03-08', // Pzt–Paz
+    weekdayAmount: 3000, weekendAmount: 4500,
+  });
+  assert.equal(written, 7);
+  const prices = store.getState().prices[room.id];
+  assert.equal(prices['2026-03-02'].amount, 3000); // Pazartesi
+  assert.equal(prices['2026-03-06'].amount, 4500); // Cuma
+  assert.equal(prices['2026-03-07'].amount, 4500); // Cumartesi
+  assert.equal(prices['2026-03-08'].amount, 3000); // Pazar
+});
+
+test('fiyat takvimi: kopyalama dolu günlerin üstüne yazmaz', () => {
+  const store = newStore();
+  const room = store.saveRoom({ number: '101', beds: [{ type: 'double', count: 1 }], maxOccupancy: 2 });
+  store.bulkPrice({ roomIds: [room.id], from: '2026-03-01', to: '2026-03-07', weekdayAmount: 2000, weekendAmount: 2000 });
+  store.savePrice(room.id, '2026-03-08', { amount: 9999 });
+
+  const written = store.copyPrices({
+    roomIds: [room.id], sourceFrom: '2026-03-01', sourceTo: '2026-03-07', targetFrom: '2026-03-08',
+  });
+  const prices = store.getState().prices[room.id];
+  assert.equal(prices['2026-03-08'].amount, 9999, 'dolu gün korunmalı');
+  assert.equal(prices['2026-03-09'].amount, 2000);
+  assert.equal(written, 6);
+});
+
+test('gider aktif/pasif anahtarı kaydı silmez', () => {
+  const store = newStore();
+  const expense = store.saveExpense({ date: '2026-03-02', category: 'rent', description: 'Kira', amount: 1000, allocation: 'general' });
+  const toggled = store.toggleExpense(expense.id);
+  assert.equal(toggled.active, false);
+  assert.equal(store.getState().expenses.length, 1);
+  store.toggleExpense(expense.id);
+  assert.equal(store.getState().expenses[0].active, true);
+});
+
+test('kur ayarı ve görüntüleme para birimi kaydedilir', () => {
+  const store = newStore();
+  store.saveFx({ rate: 50 });
+  store.recordRate('2026-03-01', 48.2);
+  store.setDisplayCurrency('EUR');
+  const { settings } = store.getState();
+  assert.equal(settings.fx.rate, 48.2);
+  assert.equal(settings.fx.history['2026-03-01'], 48.2);
+  assert.equal(settings.displayCurrency, 'EUR');
+  assert.throws(() => store.saveFx({ rate: 0 }), ValidationError);
+});
+
+test('kategori yöneticisi özel kategori ekler ve siler', () => {
+  const store = newStore();
+  const category = store.saveCategory({ label: 'Havuz Kimyasalı', group: 'operational', color: '#199e70' });
+  assert.equal(store.getState().settings.customCategories.length, 1);
+  store.deleteCategory(category.key);
+  assert.equal(store.getState().settings.customCategories.length, 0);
+  assert.throws(() => store.saveCategory({ label: '' }), ValidationError);
 });
