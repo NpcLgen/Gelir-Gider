@@ -1,7 +1,7 @@
 /** Rezervasyon girişi — kişi sayısı, seçilen odanın kapasitesiyle sınırlıdır. */
 
 import { reservationGuestNights, reservationNights, roomLabel } from '../core/model.js';
-import { tariffLinesFor } from '../core/costEngine.js';
+import { priceVerdict, tariffLinesFor } from '../core/costEngine.js';
 import { CURRENCIES } from '../core/catalog.js';
 import { formatDate, formatMoney } from '../core/format.js';
 import { clear, confirmDialog, errorList, field, h, openModal, select, toast } from './dom.js';
@@ -79,7 +79,36 @@ export function openReservationForm(app, source) {
     content: (close) => {
       const errorBox = h('div', { class: 'error-box hidden' });
       const guestsBox = h('div', {});
+      const rateBox = h('div', {});
       let commissionInput;
+
+      const present = app.present();
+
+      /** Gecelik net fiyatı odanın maliyet eşikleriyle karşılaştırır. */
+      const renderRateCheck = () => {
+        clear(rateBox);
+        const row = app.report().rooms.find((r) => r.room.id === draft.roomId);
+        const nights = draft.checkIn && draft.checkOut
+          ? Math.round((Date.parse(`${draft.checkOut}T00:00:00Z`) - Date.parse(`${draft.checkIn}T00:00:00Z`)) / 86400000)
+          : 0;
+        if (!row?.pricing || nights <= 0 || !(draft.totalAmount > 0)) return;
+
+        const base = draft.currency === 'EUR' ? draft.totalAmount * present.rate : draft.totalAmount;
+        const net = base * (1 - (draft.commissionRate || 0) / 100);
+        const perNight = net / nights;
+        const verdict = priceVerdict(perNight, row.pricing);
+        const label = {
+          loss: '⛔ ZARAR: gecelik net fiyat odanın alt limitinin altında.',
+          below: '⚠️ Gecelik net fiyat başa baş fiyatın altında; sabit gider payını karşılamıyor.',
+          'under-target': '⚑ Gecelik net fiyat hedef kâr marjının altında.',
+          ok: '✔ Gecelik net fiyat hedef marjın üzerinde.',
+        }[verdict];
+
+        rateBox.appendChild(h('div', { class: `verdict verdict-${verdict}` },
+          h('strong', {}, label),
+          h('span', { class: 'small' },
+            `Gecelik net ${present.money(perNight)} · alt limit ${present.money(row.pricing.floor)} · başa baş ${present.money(row.pricing.breakEven)} · tavsiye ${present.money(row.pricing.recommended)}`)));
+      };
 
       const renderGuests = () => {
         clear(guestsBox);
@@ -88,7 +117,7 @@ export function openReservationForm(app, source) {
         if (draft.guests > max) draft.guests = max || 1;
         guestsBox.appendChild(field('Konaklayan Kişi Sayısı *',
           max
-            ? select({ class: 'guests-select', onChange: (e) => { draft.guests = Number(e.target.value); renderGuests(); } },
+            ? select({ class: 'guests-select', onChange: (e) => { draft.guests = Number(e.target.value); renderGuests(); renderRateCheck(); } },
               Array.from({ length: max }, (_, i) => ({ value: i + 1, label: `${i + 1} Kişi` })), draft.guests)
             : h('input', { type: 'text', readOnly: true, class: 'readonly', value: 'Önce oda seçin' }),
           room ? `Kapasite: ${room.maxOccupancy} kişi · Kişi başı sarfiyat bu sayıya göre hesaplanır.` : ''));
@@ -97,20 +126,20 @@ export function openReservationForm(app, source) {
 
       const form = h('form', { class: 'stack', onSubmit: (e) => e.preventDefault() },
         errorBox,
-        field('Oda *', select({ class: 'room-select', onChange: (e) => { draft.roomId = e.target.value; renderGuests(); } },
+        field('Oda *', select({ class: 'room-select', onChange: (e) => { draft.roomId = e.target.value; renderGuests(); renderRateCheck(); } },
           rooms.map((r) => ({ value: r.id, label: `${roomLabel(r)} · maks. ${r.maxOccupancy} kişi` })), draft.roomId)),
         field('Misafir Adı *', h('input', {
           type: 'text', value: draft.guestName, onInput: (e) => { draft.guestName = e.target.value; },
         })),
         guestsBox,
         h('div', { class: 'grid-2' },
-          field('Giriş *', h('input', { type: 'date', value: draft.checkIn, onInput: (e) => { draft.checkIn = e.target.value; } })),
-          field('Çıkış *', h('input', { type: 'date', value: draft.checkOut, onInput: (e) => { draft.checkOut = e.target.value; } })),
+          field('Giriş *', h('input', { type: 'date', value: draft.checkIn, onInput: (e) => { draft.checkIn = e.target.value; renderRateCheck(); } })),
+          field('Çıkış *', h('input', { type: 'date', value: draft.checkOut, onInput: (e) => { draft.checkOut = e.target.value; renderRateCheck(); } })),
           field('Toplam Tutar', h('input', {
-            type: 'number', min: '0', step: '50', value: draft.totalAmount,
-            onInput: (e) => { draft.totalAmount = Number(e.target.value); },
+            type: 'number', min: '0', step: 'any', value: draft.totalAmount,
+            onInput: (e) => { draft.totalAmount = Number(e.target.value); renderRateCheck(); },
           })),
-          field('Para Birimi', select({ class: 'res-currency', onChange: (e) => { draft.currency = e.target.value; } },
+          field('Para Birimi', select({ class: 'res-currency', onChange: (e) => { draft.currency = e.target.value; renderRateCheck(); } },
             CURRENCIES.map((c) => ({ value: c.key, label: `${c.symbol} ${c.key}` })), draft.currency)),
           field('Kanal', select({
             onChange: (e) => {
@@ -118,12 +147,14 @@ export function openReservationForm(app, source) {
               const rate = { booking: 15, airbnb: 14 }[draft.channel] ?? 0;
               draft.commissionRate = rate;
               commissionInput.value = String(rate);
+              renderRateCheck();
             },
           }, CHANNELS, draft.channel)),
           field('Komisyon Oranı (%)', (commissionInput = h('input', {
-            type: 'number', min: '0', max: '100', step: '1', value: draft.commissionRate,
-            onInput: (e) => { draft.commissionRate = Number(e.target.value); },
+            type: 'number', min: '0', max: '100', step: 'any', value: draft.commissionRate,
+            onInput: (e) => { draft.commissionRate = Number(e.target.value); renderRateCheck(); },
           })), 'Net gelirden düşülür (PRD §2.2 Pazarlama & Komisyon).')),
+        rateBox,
         h('label', { class: 'check-inline' },
           h('input', { type: 'checkbox', checked: draft.breakfastIncluded, onChange: (e) => { draft.breakfastIncluded = e.target.checked; } }),
           'Kahvaltı dahil (kişi başı kahvaltı maliyeti bu odaya yazılır)'),

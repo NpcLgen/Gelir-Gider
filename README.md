@@ -10,7 +10,7 @@ Tüm gereksinimler ve hesaplama kuralları: **[PRD.md](PRD.md)**
 
 ```bash
 npm start     # sunucuyu başlatır, adresi ekrana yazar (varsayılan http://127.0.0.1:5173)
-npm test      # 62 birim testi (node:test, bağımlılıksız)
+npm test      # 78 birim testi (node:test, bağımlılıksız)
 ```
 
 Port doluysa sunucu çökmez; sıradaki boş portu seçip açılacak adresi ekrana yazar.
@@ -26,7 +26,7 @@ Tarayıcı akış testi opsiyoneldir (Playwright gerektirir, depo bağımlılı�
 ```bash
 npm i -D playwright && npx playwright install chromium
 npm start &                 # sunucu ayakta olmalı
-npm run test:browser        # 28 adımlı uçtan uca akış
+npm run test:browser        # 32 adımlı uçtan uca akış
 ```
 
 ## Modüller
@@ -34,6 +34,7 @@ npm run test:browser        # 28 adımlı uçtan uca akış
 | Modül | Ne yapar | PRD |
 | --- | --- | --- |
 | **Dashboard** | Kâr/zarar, marj, ADR, RevPAR, doluluk, kişi başı maliyet; gider dağılım grafiği, başa baş noktası, YOY analizi | §3 |
+| **Fiyat Tavsiyesi** | Oda başına gecelik maliyet, alt limit (altı zarar), başa baş ve tavsiye fiyatı; fiyat girerken ve rezervasyon açarken canlı zarar uyarısı | §3.3 |
 | **Fiyat / Gelir Takvimi** | Odalar × günler fiyat ızgarası, toplu güncelleme (hafta içi/hafta sonu), fiyat kopyalama, boş gün vurgulama | §1.1 |
 | **Gider Yönetimi** | Aktif/pasif anahtarı, dekont eki, tekrarlayan giderler, grup filtreleri, beş dağıtım yöntemi | §1.2, §2.3 |
 | **Rezervasyonlar** | Kapasiteyle sınırlı kişi sayısı, çakışma kontrolü, TL/EUR tutar, acenta komisyonu | §8.4.2 |

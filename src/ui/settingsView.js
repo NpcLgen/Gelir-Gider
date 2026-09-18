@@ -45,11 +45,12 @@ export function settingsView(app) {
 
   /* --- §8.2 Hedef marj --- */
   const targetValue = h('strong', {}, `%${Math.round((settings.targetMargin ?? 0) * 100)}`);
+  const plannedValue = h('strong', {}, `%${Math.round((settings.plannedOccupancy ?? 0.6) * 100)}`);
   const shareValue = h('strong', {}, `%${Math.round((settings.fixedShare ?? 0.25) * 100)}`);
 
   /* --- §8.2 Kur --- */
   const rateInput = h('input', {
-    type: 'number', min: '0', step: '0.01', value: settings.fx.rate,
+    type: 'number', min: '0', step: 'any', value: settings.fx.rate,
     onInput: (e) => { settings.fx.rate = Number(e.target.value); },
   });
   const fxStatus = h('span', { class: 'muted small' },
@@ -112,7 +113,7 @@ export function settingsView(app) {
           onInput: (e) => { settings.perGuestTariff[index].label = e.target.value; },
         }),
         h('input', {
-          type: 'number', min: '0', step: '1', value: item.amount, class: 'count',
+          type: 'number', min: '0', step: 'any', value: item.amount, class: 'count',
           onInput: (e) => { settings.perGuestTariff[index].amount = Number(e.target.value); },
         }),
         select({ onChange: (e) => { settings.perGuestTariff[index].basis = e.target.value; } },
@@ -168,7 +169,15 @@ export function settingsView(app) {
           'Gerçekleşen marj bu hedefin altındaysa panelde kırmızı vurgulanır.'),
         field('Görüntüleme Para Birimi',
           select({ onChange: (e) => { settings.displayCurrency = e.target.value; } },
-            CURRENCIES.map((c) => ({ value: c.key, label: `${c.symbol} ${c.label}` })), settings.displayCurrency))),
+            CURRENCIES.map((c) => ({ value: c.key, label: `${c.symbol} ${c.label}` })), settings.displayCurrency)),
+        field('Planlanan Doluluk (fiyat tavsiyesi için)',
+          h('div', { class: 'row gap center' },
+            h('input', {
+              type: 'range', min: '0.1', max: '1', step: '0.05', value: settings.plannedOccupancy ?? 0.6,
+              class: 'planned-occupancy',
+              onInput: (e) => { settings.plannedOccupancy = Number(e.target.value); plannedValue.textContent = `%${Math.round(settings.plannedOccupancy * 100)}`; },
+            }), plannedValue),
+          'Sabit giderler bu doluluğa bölünerek odanın başa baş gecelik fiyatı bulunur. Düşük varsayım = yüksek tavsiye fiyatı.')),
       h('div', { class: 'grid-2' },
         field('Kur Kaynağı', select({ onChange: (e) => { settings.fx.source = e.target.value; } },
           FX_SOURCES.map((f) => ({ value: f.key, label: f.label })), settings.fx.source)),

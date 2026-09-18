@@ -395,3 +395,63 @@ table.calendar th, table.calendar td { border: none; padding: 2px; }
   .bar-list-row { grid-template-columns: 120px 1fr 100px; }
   .category-row { grid-template-columns: 52px 1fr; }
 }
+
+/* ===================== Fiyat tavsiyesi ve maliyet uyarıları ===================== */
+
+/* Takvim hücreleri: fiyat maliyet eşiklerinin altındaysa işaretlenir.
+   Anlam yalnızca renge bırakılmaz — ⚠ / ! işareti ve tooltip eşlik eder. */
+.cal-cell.price-below,
+.legend-swatch.sw-price-below {
+  background: rgba(217, 89, 38, 0.22);
+  border-color: var(--warn);
+  color: #ffd9c2;
+}
+.cal-cell.price-loss,
+.legend-swatch.sw-price-loss {
+  background: rgba(255, 107, 107, 0.26);
+  border-color: var(--bad);
+  color: #ffd5d5;
+  font-weight: 700;
+}
+.cal-warn { position: absolute; top: 2px; left: 4px; font-size: 0.62rem; }
+
+.legend-bar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 10px 14px; }
+.legend-chip { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+.legend-swatch {
+  width: 26px; min-width: 26px; height: 20px;
+  border: 1px solid transparent; border-radius: 6px;
+  display: inline-grid; place-items: center; font-size: 0.6rem;
+  background: var(--card-2); color: var(--text);
+}
+.legend-swatch.sw-filled { background: rgba(25, 158, 112, 0.16); border-color: rgba(25, 158, 112, 0.45); }
+.legend-swatch.sw-missing { background: rgba(217, 89, 38, 0.10); border-color: rgba(217, 89, 38, 0.30); }
+
+/* Fiyat girişi / rezervasyon formundaki karar kutusu */
+.price-advice { display: flex; flex-direction: column; gap: 10px; }
+.verdict {
+  display: flex; flex-direction: column; gap: 3px;
+  border-radius: 10px; padding: 10px 12px; border: 1px solid var(--line);
+  background: var(--card-2);
+}
+.verdict-loss { border-color: var(--bad); background: rgba(255, 107, 107, 0.14); color: #ffd5d5; }
+.verdict-below { border-color: var(--warn); background: rgba(255, 181, 71, 0.13); color: #ffe4bd; }
+.verdict-under-target { border-color: #c98500; background: rgba(201, 133, 0, 0.12); }
+.verdict-ok { border-color: var(--good); background: rgba(62, 207, 142, 0.12); }
+.verdict .small { color: inherit; opacity: 0.85; }
+
+/* Fiyat tavsiyesi tablosu */
+.row-alert { background: rgba(255, 107, 107, 0.07); }
+.badge-alert {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  background: rgba(255, 107, 107, 0.18); color: var(--bad); font-size: 0.76rem; font-weight: 600;
+  white-space: nowrap;
+}
+.badge-warn {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  background: rgba(255, 181, 71, 0.18); color: var(--warn); font-size: 0.76rem; font-weight: 600;
+  white-space: nowrap;
+}
+.alert-line {
+  margin: 0; padding: 12px 16px; border-top: 1px solid var(--line);
+  color: var(--bad); font-weight: 600; font-size: 0.88rem;
+}

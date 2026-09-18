@@ -269,7 +269,7 @@ export function openExpenseForm(app, source, preset = {}) {
         h('div', { class: 'grid-3' },
           field('Tarih *', h('input', { type: 'date', value: draft.date, onInput: (e) => { draft.date = e.target.value; } })),
           field('Tutar *', h('input', {
-            type: 'number', min: '0', step: '10', value: draft.amount,
+            type: 'number', min: '0', step: 'any', value: draft.amount,
             onInput: (e) => { draft.amount = Number(e.target.value); },
           })),
           field('Para Birimi', select({ onChange: (e) => { draft.currency = e.target.value; } },

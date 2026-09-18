@@ -5,7 +5,7 @@
  */
 
 import { EXPENSE_GROUPS, UTILITY_KINDS, UTILITY_LABELS } from '../core/catalog.js';
-import { compareReports } from '../core/costEngine.js';
+import { compareReports, grossUpForCommission, priceVerdict } from '../core/costEngine.js';
 import { previousYear } from '../core/dates.js';
 import { categoryOf, roomLabel } from '../core/model.js';
 import { formatDecimal, formatNumber, formatPercent } from '../core/format.js';
@@ -37,6 +37,7 @@ export function dashboardView(app) {
       h('p', { class: 'muted' }, `${report.period.from} → ${report.period.to} · tutarlar ${present.currency} cinsinden`)),
     kpis,
     h('div', { class: 'split-2' }, expenseBreakdown(report, present), breakEvenCard(report, present, totals)),
+    pricingTable(app, report, present),
     yoyCard(app, report, present),
     profitabilityTable(app, report, present),
     report.unallocated.items.length ? unallocatedCard(report, present) : null,
@@ -170,6 +171,72 @@ function profitabilityTable(app, report, present) {
       h('thead', {}, h('tr', {}, ...['Oda', 'Doluluk', 'ADR', 'RevPAR', 'Net Gelir', 'Doğrudan', 'Kişi Başı', 'Genel Pay', 'Toplam Gider', 'Kâr', 'Marj'].map((t) => h('th', {}, t)))),
       h('tbody', {}, ...(rows.length ? rows : [h('tr', {}, h('td', { colspan: '11', class: 'empty' }, 'Bu dönemde veri yok.'))]))),
     h('div', { class: 'chart-pad' }, barList(items, { format: (v) => present.money(v) })));
+}
+
+
+/** PRD §3.3 — oda bazlı gecelik maliyet, alt limit ve tavsiye fiyatı. */
+function pricingTable(app, report, present) {
+  const { prices, settings } = app.store.getState();
+  const p = app.period();
+  const planned = Math.round((settings.plannedOccupancy ?? 0.6) * 100);
+  const target = Math.round((settings.targetMargin ?? 0) * 100);
+
+  const rows = report.rooms
+    .filter((row) => row.room.status !== 'passive')
+    .map((row) => {
+      const pr = row.pricing;
+      // Takvimde alt limitin altında kalan gün var mı?
+      const roomPrices = prices?.[row.room.id] ?? {};
+      let lossDays = 0;
+      let belowDays = 0;
+      for (const [date, entry] of Object.entries(roomPrices)) {
+        if (date < p.from || date > p.to || !(entry.amount > 0)) continue;
+        const base = entry.currency === 'EUR' ? entry.amount * present.rate : entry.amount;
+        const verdict = priceVerdict(base, pr);
+        if (verdict === 'loss') lossDays += 1;
+        else if (verdict === 'below') belowDays += 1;
+      }
+
+      return h('tr', { class: lossDays ? 'row-alert' : '' },
+        h('td', {}, h('strong', {}, roomLabel(row.room)),
+          h('div', { class: 'muted small' }, `${row.roomNights} gece satıldı · ort. ${formatDecimal(pr.assumedGuests)} kişi`)),
+        h('td', { class: 'num' }, pr.costPerSoldNight == null ? '—' : present.money(pr.costPerSoldNight)),
+        h('td', { class: 'num bad' }, present.money(pr.floor)),
+        h('td', { class: 'num' }, present.money(pr.breakEven)),
+        h('td', { class: 'num good' }, h('strong', {}, present.money(pr.recommended))),
+        h('td', { class: 'num muted' }, present.money(grossUpForCommission(pr.recommended, 15))),
+        h('td', { class: 'num' }, present.money(row.adr)),
+        h('td', {},
+          lossDays
+            ? h('span', { class: 'badge-alert' }, `⛔ ${lossDays} gün zarar`)
+            : belowDays
+              ? h('span', { class: 'badge-warn' }, `⚠️ ${belowDays} gün başa başın altında`)
+              : h('span', { class: 'muted small' }, '✔ sorun yok')));
+    });
+
+  const totalLoss = report.rooms.reduce((sum, row) => sum + (row.adr > 0 && row.adr < row.pricing.floor ? 1 : 0), 0);
+
+  return h('section', { class: 'card table-card stack' },
+    h('header', { class: 'card-header' },
+      h('h3', {}, 'Oda Bazlı Fiyat Tavsiyesi ve Alt Limit'),
+      h('span', { class: 'muted small' }, `%${planned} doluluk varsayımı · %${target} hedef marj`)),
+    h('p', { class: 'muted small chart-pad' },
+      'Alt limit = bir gece daha satmanın maliyeti (kahvaltı, sarfiyat, doluluğa bağlı enerji). ' +
+      'Bu fiyatın altındaki her satış doğrudan zarardır. Başa baş fiyat sabit gider payını da karşılar.'),
+    h('table', {},
+      h('thead', {}, h('tr', {},
+        h('th', {}, 'Oda'),
+        h('th', { class: 'num' }, 'Gecelik Maliyet'),
+        h('th', { class: 'num' }, 'Alt Limit'),
+        h('th', { class: 'num' }, 'Başa Baş'),
+        h('th', { class: 'num' }, 'Tavsiye'),
+        h('th', { class: 'num' }, 'Tavsiye (OTA %15)'),
+        h('th', { class: 'num' }, 'Gerçekleşen ADR'),
+        h('th', {}, 'Takvim Durumu'))),
+      h('tbody', {}, ...(rows.length ? rows : [h('tr', {}, h('td', { colspan: '8', class: 'empty' }, 'Oda yok.'))]))),
+    totalLoss
+      ? h('p', { class: 'alert-line' }, `⛔ ${totalLoss} odanın gerçekleşen ortalama fiyatı (ADR) alt limitin altında — bu odalar satıldıkça zarar ediyor.`)
+      : null);
 }
 
 function unallocatedCard(report, present) {

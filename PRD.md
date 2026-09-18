@@ -2,7 +2,7 @@
 ## Gelir-Gider ve Kârlılık Yönetim Sistemi
 
 **Sürüm:** 1.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 62 birim testi (`npm test`) + 28 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 78 birim testi (`npm test`) + 32 adımlı tarayıcı akış testi (`npm run test:browser`).
 
 ---
 
@@ -170,6 +170,51 @@ körlük (CVD) ayrımı, kontrast ve açıklık bantları için doğrulanmışt�
   lekelenen havlu, arızalanan eşya gibi kalemleri maliyet olarak işler; hem odaya yazılır
   hem de raporda ayrı toplanır.
 
+
+### 3.3. Oda Bazlı Fiyat Tavsiyesi ve Alt Limit ✅
+
+*Uygulama: `costEngine.roomPricing()`, `priceVerdict()`; arayüz: Dashboard tablosu,
+takvim hücreleri, fiyat giriş kutusu ve rezervasyon formu.*
+
+Maliyetler satışa bağlılıklarına göre ikiye ayrılır:
+
+* **Değişken** — kişi başı sarfiyat (kahvaltı, su, buklet) + genel giderlerin doluluğa
+  bağlı kısmı. *Bir gece daha satıldığında* ortaya çıkan maliyettir.
+* **Sabit** — doğrudan giderler (bakım/onarım), eşit dağıtılan kalemler (kira, maaş) ve
+  genel giderlerin sabit payı. Oda boş dursa da oluşur.
+
+Her oda için üç eşik üretilir:
+
+| Eşik | Formül | Anlamı |
+| --- | --- | --- |
+| **Alt limit** | değişken maliyet / satılan gece | Altındaki her satış doğrudan zarardır |
+| **Başa baş** | alt limit + sabit maliyet / (planlanan doluluk × gün) | Tüm maliyeti karşılar |
+| **Tavsiye** | başa baş / (1 − hedef marj) | Hedef kâr marjını tutturur |
+
+Ayrıca **gecelik gerçekleşen maliyet** = odanın toplam gideri / satılan gece sayısı
+("bu odanın bana gecelik maliyeti").
+
+**Uyarı noktaları** — fiyat dört durumdan birine düşer ve dört ekranda birden gösterilir:
+
+| Durum | Gösterim |
+| --- | --- |
+| `loss` | ⛔ ZARAR — alt limitin altında |
+| `below` | ⚠️ Başa baş fiyatın altında |
+| `under-target` | ⚑ Hedef kâr marjının altında |
+| `ok` | ✔ Hedefe uygun |
+
+1. **Fiyat giriş kutusu:** tutar yazılırken canlı karar + üç eşik; "Başa başa ayarla" ve
+   "Tavsiyeye ayarla" düğmeleri (eşiğin altına düşmemek için yukarı yuvarlar).
+2. **Takvim:** alt limitin altındaki günler ⚠, başa başın altındakiler `!` işaretiyle
+   ve ayrı renkle işaretlenir; açıklama şeridi anlamları yazar.
+3. **Rezervasyon formu:** gecelik **net** fiyat (komisyon düşülmüş) eşiklerle karşılaştırılır.
+4. **Dashboard:** oda bazlı tablo — gecelik maliyet, alt limit, başa baş, tavsiye,
+   komisyonlu kanal için brüt tavsiye (`tavsiye / (1 − komisyon)`), gerçekleşen ADR ve
+   takvimde kaç günün zararda olduğu.
+
+Planlanan doluluk varsayımı **Ayarlar → Finansal Hedef ve Kur** altından değiştirilir
+(varsayılan %60); düşük varsayım daha yüksek tavsiye fiyatı üretir.
+
 ---
 
 ## 4. UI / UX Mimarisi ✅
@@ -255,6 +300,8 @@ Ek parametre: **boş odaların sabit pay oranı** (0 = gider yalnızca dolu odal
   Dashboard'da gerçekleşen marj hedefin altındaysa kırmızı, üstündeyse yeşil vurgulanır.
 * **Kur Çekim Ayarı:** `TCMB Efektif Satış` / `TCMB Döviz Alış` / `Sabit Kur Gir`.
 * **Görüntüleme Para Birimi:** Raporların varsayılan para birimi.
+* **Planlanan Doluluk:** Fiyat tavsiyesinde sabit giderlerin yayıldığı doluluk varsayımı
+  (varsayılan %60, bkz. §3.3).
 
 ### 8.3. Kategori ve Oda Ayarları
 
@@ -388,6 +435,14 @@ kişi başı sarfiyat** ve gecelik liste fiyatı.
 | S14 | Hızlı tarih filtreleri doğru dönem üretir | `hızlı tarih aralıkları doğru dönem üretir` |
 | S15 | Dağıtım toplamı gider toplamına eşittir | `dağıtılan tutarların toplamı dönem giderlerine eşittir`, `demo verisi 9 oda ile tutarlıdır ve rapor üretir` |
 | S16 | Dışa aktarım CSV/Excel dosyası üretir | Tarayıcı: `Raporlar sayfası CSV indirir`, `… Excel dosyası indirir` |
+| S17 | Alt limit = bir gece daha satmanın maliyeti | `alt limit, bir gece daha satmanın maliyetidir (kişi başı sarfiyat)` |
+| S18 | Başa baş fiyat sabit payı planlanan dolulukta dağıtır | `başa baş fiyat, sabit gider payını planlanan dolulukta dağıtır` |
+| S19 | Tavsiye fiyatı hedef marjı tutturur | `tavsiye fiyatı hedef marjı tutturur` |
+| S20 | Gecelik maliyetin altında satış zarar olarak bildirilir | `maliyeti 2.000 TL olan oda 1.900 TL’ye satılırsa zarar bildirilir` |
+| S21 | Düşük planlanan doluluk tavsiye fiyatını yükseltir | `düşük planlanan doluluk, tavsiye fiyatını yükseltir` |
+| S22 | Komisyonlu kanal için brüt fiyat hesaplanır | `komisyonlu kanalda aynı neti bırakan brüt fiyat hesaplanır` |
+| S23 | Zarar/başa baş altı fiyatlar takvimde işaretlenir | Tarayıcı: `Takvim: alt limitin altındaki fiyat ZARAR olarak uyarır` |
+| S24 | Serbest (yuvarlak olmayan) tutarlar kaydedilebilir | Tarayıcı: `Takvim: 50’nin katı olmayan fiyat da kaydedilebilir` |
 
 ---
 

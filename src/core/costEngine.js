@@ -399,7 +399,16 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], pric
       projectedRevenue: projected?.total ?? 0,
       missingPriceDays: projected?.missing ?? 0,
     };
-  });
+  }).map((row) => ({
+    ...row,
+    pricing: roomPricing(row, {
+      days: daysInPeriod(p),
+      fixedShare,
+      targetMargin: cfg.targetMargin ?? 0,
+      plannedOccupancy: cfg.plannedOccupancy ?? 0.6,
+      tariff: cfg.perGuestTariff,
+    }),
+  }));
 
   const totals = roomRows.reduce(
     (acc, row) => {
@@ -454,6 +463,97 @@ export function buildReport({ rooms = [], reservations = [], expenses = [], pric
     expenses: periodExpenses,
     breakEven: breakEven({ totals, byGroup, availableRoomNights }),
   };
+}
+
+
+/**
+ * Oda bazlı gecelik maliyet ve fiyat eşikleri (PRD §3.3).
+ *
+ * Maliyetler satışa bağlılıklarına göre ikiye ayrılır:
+ *  - **Değişken**: kişi başı sarfiyat (kahvaltı, su, buklet) + genel giderlerin
+ *    doluluğa bağlı kısmı. Bir gece daha satıldığında ortaya çıkan maliyettir.
+ *  - **Sabit**: doğrudan giderler (bakım/onarım), eşit dağıtılan kalemler (kira,
+ *    maaş) ve genel giderlerin sabit payı. Oda boş dursa da oluşur.
+ *
+ * Üretilen üç eşik:
+ *  1. `floor`       — mutlak alt limit (değişken maliyet). Altındaki her satış,
+ *                     her gecede doğrudan zarardır.
+ *  2. `breakEven`   — planlanan dolulukta sabit payı da karşılayan başa baş fiyat.
+ *  3. `recommended` — hedef kâr marjını tutturan tavsiye fiyatı.
+ *
+ * `costPerSoldNight`, dönemde gerçekleşen satışa göre odanın gecelik gerçek
+ * maliyetidir ("bu odanın bana gecelik maliyeti").
+ */
+export function roomPricing(row, { days, fixedShare, targetMargin, plannedOccupancy, tariff }) {
+  const soldNights = row.roomNights;
+  const occ = Math.min(1, Math.max(0, row.occupancyRate));
+  const share = Math.min(1, Math.max(0, fixedShare));
+  const planned = Math.min(1, Math.max(0.05, plannedOccupancy));
+  const margin = Math.min(0.95, Math.max(0, targetMargin));
+
+  // Genel giderlerin doluluğa bağlı (değişken) kısmı, ağırlık formülünden türetilir.
+  const occFactor = share + (1 - share) * occ;
+  const variableShareOfWeighted = occFactor > 0 ? ((1 - share) * occ) / occFactor : 0;
+
+  const variableCost = round2(
+    row.costs.perGuest + row.costs.tariff + row.weightedTotal * variableShareOfWeighted,
+  );
+  const fixedCost = round2(
+    row.costs.direct + row.costs.equal + row.weightedTotal * (1 - variableShareOfWeighted),
+  );
+
+  // Satış yoksa değişken maliyet tarifeden tahmin edilir.
+  const assumedGuests = soldNights > 0
+    ? row.guestNights / soldNights
+    : Math.min(2, row.room.maxOccupancy || 1);
+  const tariffPerGuestNight = (tariff ?? [])
+    .filter((t) => t.active !== false && t.basis === 'guestNight')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const variablePerNight = soldNights > 0
+    ? round2(variableCost / soldNights)
+    : round2(tariffPerGuestNight * assumedGuests);
+
+  const plannedNights = Math.max(1, Math.round(planned * days));
+  const fixedPerNight = round2(fixedCost / plannedNights);
+  const breakEven = round2(variablePerNight + fixedPerNight);
+  const recommended = round2(breakEven / (1 - margin));
+
+  return {
+    soldNights,
+    assumedGuests: round2(assumedGuests),
+    variableCost,
+    fixedCost,
+    /** Mutlak alt limit: bu fiyatın altında her gece doğrudan zarar. */
+    floor: variablePerNight,
+    /** Planlanan dolulukta tüm maliyeti karşılayan fiyat. */
+    breakEven,
+    /** Hedef marjı tutturan tavsiye fiyatı. */
+    recommended,
+    /** Dönemde gerçekleşen gecelik maliyet (satılan gece başına). */
+    costPerSoldNight: soldNights > 0 ? round2(row.totalCost / soldNights) : null,
+    plannedNights,
+    plannedOccupancy: planned,
+    targetMargin: margin,
+  };
+}
+
+/**
+ * Bir gecelik fiyatın hangi eşikte olduğunu söyler.
+ * @returns {'loss'|'below'|'under-target'|'ok'}
+ */
+export function priceVerdict(price, pricing) {
+  if (!(price > 0) || !pricing) return 'ok';
+  if (price < pricing.floor) return 'loss';
+  if (price < pricing.breakEven) return 'below';
+  if (price < pricing.recommended) return 'under-target';
+  return 'ok';
+}
+
+/** Komisyonlu kanalda aynı net geliri bırakan brüt fiyat. */
+export function grossUpForCommission(price, commissionRate) {
+  const rate = Math.min(0.95, Math.max(0, (commissionRate || 0) / 100));
+  return round2(price / (1 - rate));
 }
 
 /**

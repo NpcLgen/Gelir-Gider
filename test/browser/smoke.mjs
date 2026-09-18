@@ -280,6 +280,86 @@ await step('Kategori yöneticisi özel kategori ekler', async () => {
   await page.click('.modal-header .icon-btn');
 });
 
+
+/* ------------------------------- §3.3 fiyat tavsiyesi ve alt limit ---- */
+
+await step('Dashboard: oda bazlı fiyat tavsiyesi tablosu', async () => {
+  await go('Dashboard');
+  const card = page.locator('.card:has-text("Fiyat Tavsiyesi ve Alt Limit")');
+  await card.waitFor();
+  const head = await card.locator('thead th').allTextContents();
+  for (const sutun of ['Gecelik Maliyet', 'Alt Limit', 'Başa Baş', 'Tavsiye']) {
+    if (!head.includes(sutun)) throw new Error(`${sutun} sütunu yok: ${head.join(', ')}`);
+  }
+  const ilk = (await card.locator('tbody tr').first().allTextContents()).join(' ').replace(/\s+/g, ' ');
+  console.log(`   ${ilk.slice(0, 120)}`);
+});
+
+await step('Takvim: alt limitin altındaki fiyat ZARAR olarak uyarır', async () => {
+  await go('Fiyat / Gelir Takvimi');
+  await page.waitForSelector('table.calendar');
+  const legend = await page.textContent('.legend-bar');
+  if (!legend.includes('zarar')) throw new Error(`açıklama satırı eksik: ${legend}`);
+
+  await page.click('table.calendar .cal-cell.filled >> nth=0');
+  await page.waitForSelector('.price-advice');
+  const esikler = await page.$$eval('.price-advice .kv', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
+  console.log(`   ${esikler.join(' · ')}`);
+
+  await page.fill('input.price-amount', '50');
+  await page.waitForTimeout(200);
+  const uyari = await page.textContent('.verdict');
+  if (!uyari.includes('ZARAR')) throw new Error(uyari);
+
+  await page.click('button:has-text("Tavsiyeye ayarla")');
+  await page.waitForTimeout(200);
+  const uygun = await page.textContent('.verdict');
+  if (!uygun.includes('Hedefe uygun')) throw new Error(uygun);
+
+  await page.click('.modal button:has-text("Kaydet")');
+  await page.waitForTimeout(600);
+  await page.waitForSelector('.modal-backdrop', { state: 'detached' });
+});
+
+await step('Takvim: 50’nin katı olmayan fiyat da kaydedilebilir', async () => {
+  // Regresyon: input step="50" iken tarayıcı 1.899 gibi değerleri geçersiz sayıp
+  // Kaydet'i sessizce engelliyordu.
+  await page.click('table.calendar .cal-cell.filled >> nth=1');
+  await page.waitForSelector('.price-advice');
+  await page.fill('input.price-amount', '1899');
+  await page.click('.modal button:has-text("Kaydet")');
+  await page.waitForSelector('.modal-backdrop', { state: 'detached' });
+  const hucre = await page.textContent('table.calendar .cal-cell.filled >> nth=1');
+  if (!hucre.includes('1.899')) throw new Error(`fiyat kaydedilmedi: ${hucre}`);
+  console.log(`   hücre: ${hucre.trim()}`);
+});
+
+await step('Takvim: kaydedilen düşük fiyat hücrede işaretlenir', async () => {
+  await page.click('table.calendar .cal-cell.filled >> nth=0');
+  await page.waitForSelector('.price-advice');
+  await page.fill('input.price-amount', '60');
+  await page.click('.modal button:has-text("Kaydet")');
+  await page.waitForSelector('.modal-backdrop', { state: 'detached' });
+  const zararli = await page.$$('table.calendar .cal-cell.price-loss');
+  if (!zararli.length) throw new Error('zarar eden hücre işaretlenmedi');
+  console.log(`   ${zararli.length} hücre zarar olarak işaretlendi`);
+});
+
+await step('Rezervasyon: düşük gecelik net fiyat uyarılır', async () => {
+  await go('Rezervasyonlar');
+  await page.click('button:has-text("Yeni Rezervasyon")');
+  await page.waitForSelector('.modal');
+  await page.fill('.modal input[type="text"]', 'Ucuz Satış Testi');
+  await page.fill('.modal input[type="date"] >> nth=0', `${y}-${mm}-27`);
+  await page.fill('.modal input[type="date"] >> nth=1', `${y}-${mm}-28`);
+  await page.fill('.modal input[type="number"] >> nth=0', '150');
+  await page.waitForTimeout(300);
+  const uyari = await page.textContent('.modal .verdict');
+  if (!uyari.includes('ZARAR')) throw new Error(uyari);
+  console.log(`   ${uyari.replace(/\s+/g, ' ').slice(0, 110)}`);
+  await page.click('.modal-header .icon-btn');
+});
+
 /* ------------------------------------------ §6.1 raporlar / dışa aktarım */
 
 await step('Raporlar sayfası CSV indirir', async () => {

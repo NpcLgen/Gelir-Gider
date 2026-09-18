@@ -62,15 +62,15 @@ export function openRoomCard(app, source) {
         field('Durum', select({ onChange: (e) => { draft.status = e.target.value; renderSummary(summary, draft, app); } },
           ROOM_STATUSES.map((s) => ({ value: s.key, label: s.label })), draft.status)),
         field('Liste Fiyatı (gecelik)', h('input', {
-          type: 'number', value: draft.basePrice, min: '0', step: '50',
+          type: 'number', value: draft.basePrice, min: '0', step: 'any',
           onInput: (e) => { draft.basePrice = Number(e.target.value); renderSummary(summary, draft, app); },
         })),
         field('Oda Büyüklüğü (m²)', h('input', {
-          type: 'number', value: draft.area, min: '0', step: '1',
+          type: 'number', value: draft.area, min: '0', step: 'any',
           onInput: (e) => { draft.area = Number(e.target.value); renderSummary(summary, draft, app); },
         }), 'Metrekare bazlı (Seçenek B) dağıtımda kullanılır.'),
         field('Maliyet Çarpanı', h('input', {
-          type: 'number', value: draft.baseWeight, min: '0.1', step: '0.05',
+          type: 'number', value: draft.baseWeight, min: '0.1', step: 'any',
           onInput: (e) => { draft.baseWeight = Number(e.target.value); renderSummary(summary, draft, app); },
         }), 'Özel katsayı (Seçenek C): standart oda 1,0 · jakuzili oda 1,5 gibi.'),
       );

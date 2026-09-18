@@ -354,6 +354,8 @@ export function defaultSettings() {
     allocationMethod: 'coefficient',
     /** PRD §8.2 — hedeflenen minimum net kâr marjı. */
     targetMargin: 0.35,
+    /** PRD §8.2 — fiyat tavsiyesinde sabit giderlerin yayıldığı planlanan doluluk. */
+    plannedOccupancy: 0.6,
     /** Boş odaların genel giderden aldığı sabit pay oranı (0..1). */
     fixedShare: 0.25,
     /** Kişi başı sarfiyat tarifesi — "Cost Per Guest" algoritmasının girdisi. */
@@ -405,6 +407,8 @@ export function validateSettings(settings) {
   if (!METHOD_KEYS.includes(settings.allocationMethod)) errors.push('Geçersiz gider dağıtım yöntemi.');
   const target = num(settings.targetMargin, -1);
   if (target < 0 || target > 1) errors.push('Hedef kâr marjı 0 ile 1 arasında olmalıdır.');
+  const planned = num(settings.plannedOccupancy, -1);
+  if (planned <= 0 || planned > 1) errors.push('Planlanan doluluk 0 ile 1 arasında olmalıdır.');
   if (!CURRENCY_KEYS.includes(settings.displayCurrency)) errors.push('Geçersiz görüntüleme para birimi.');
   if (settings.fx) {
     if (!FX_SOURCE_KEYS.includes(settings.fx.source)) errors.push('Geçersiz kur kaynağı.');
