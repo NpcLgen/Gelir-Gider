@@ -17,7 +17,7 @@ const TYPES = {
   '.svg': 'image/svg+xml',
 };
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
@@ -34,6 +34,39 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Bulunamadı');
   }
-}).listen(port, () => {
-  console.log(`Gelir-Gider → http://localhost:${port}`);
 });
+
+/**
+ * Port doluysa (EADDRINUSE) çökmek yerine sıradaki boş portu dener.
+ * Başka bir uygulama ya da unutulmuş bir sunucu 5173'ü tutuyorsa bile çalışır.
+ */
+const MAX_TRIES = 20;
+let attempt = 0;
+
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') {
+    console.error(`Sunucu başlatılamadı: ${err.message}`);
+    process.exit(1);
+  }
+  attempt += 1;
+  if (attempt > MAX_TRIES) {
+    console.error(`${port}–${port + MAX_TRIES} portlarının hepsi dolu. PORT=9000 npm start ile farklı bir port deneyin.`);
+    process.exit(1);
+  }
+  const busy = port + attempt - 1;
+  console.log(`${busy} portu dolu, ${busy + 1} deneniyor…`);
+  server.listen(port + attempt);
+});
+
+server.on('listening', () => {
+  const actual = server.address().port;
+  console.log('');
+  console.log('  Gelir-Gider çalışıyor. Tarayıcıda şu adresi açın:');
+  console.log('');
+  console.log(`      http://127.0.0.1:${actual}`);
+  console.log('');
+  console.log('  Durdurmak için: Ctrl + C');
+  console.log('');
+});
+
+server.listen(port);

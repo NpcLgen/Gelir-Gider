@@ -9,11 +9,16 @@ Tüm gereksinimler ve hesaplama kuralları: **[PRD.md](PRD.md)**
 ## Hızlı başlangıç
 
 ```bash
-npm start     # http://localhost:5173
+npm start     # sunucuyu başlatır, adresi ekrana yazar (varsayılan http://127.0.0.1:5173)
 npm test      # 62 birim testi (node:test, bağımlılıksız)
 ```
 
+Port doluysa sunucu çökmez; sıradaki boş portu seçip açılacak adresi ekrana yazar.
+Belirli bir port için: `PORT=8080 npm start` (Windows PowerShell: `$env:PORT="8080"; npm start`).
+
 Derleme adımı ve bağımlılık yoktur — `index.html` doğrudan ES modülleri yükler.
+Uygulamayı `index.html`'e çift tıklayarak açamazsınız (ES modülleri `file://` üzerinden
+engellenir); her zaman yukarıdaki sunucuyla açın.
 Veriler tarayıcıda `localStorage`'da tutulur; ilk açılışta 9 odalı demo verisi gelir.
 
 Tarayıcı akış testi opsiyoneldir (Playwright gerektirir, depo bağımlılığı değildir):
