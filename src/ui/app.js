@@ -18,6 +18,7 @@ import { dashboardView } from './dashboardView.js';
 import { clear, h, toast } from './dom.js';
 import { employeesView } from './employeesView.js';
 import { excelView } from './excelView.js';
+import { expenseSummaryView } from './expenseSummaryView.js';
 import { expensesView, openExpenseForm } from './expensesView.js';
 import { extraWorkersView } from './extraWorkersView.js';
 import { forcePasswordChange, loginView } from './login.js';
@@ -37,6 +38,7 @@ const VIEWS = [
   { key: 'takvim', label: 'Fiyat Girişi', icon: '🗓️', module: 'fiyatGirisi', group: 'Genel', render: calendarView },
   { key: 'odalar', label: 'Oda Ayarları', icon: '🚪', module: 'odalar', group: 'Genel', render: roomsView },
 
+  { key: 'tumGiderler', label: 'Giderler', icon: '📉', module: 'giderler', group: 'Giderler', render: expenseSummaryView },
   { key: 'giderler', label: 'Genel Harcamalar', icon: '🧾', module: 'genelHarcamalar', group: 'Giderler', render: expensesView },
   { key: 'calisanlar', label: 'Çalışanlar', icon: '👷', module: 'calisanlar', group: 'Giderler', render: employeesView },
   { key: 'ekstra', label: 'Ekstra Çalışan', icon: '🧑‍🔧', module: 'ekstraCalisan', group: 'Giderler', render: extraWorkersView },
@@ -118,6 +120,12 @@ async function startApp(root, user) {
       }
       current = key;
       location.hash = key;
+      // Gidilen sayfanın bulunduğu grup kapalıysa açılır.
+      const group = groupOf(key);
+      if (group && collapsed.has(group)) {
+        collapsed.delete(group);
+        persistCollapsed();
+      }
       app.refresh();
     },
     refresh() {
@@ -134,19 +142,64 @@ async function startApp(root, user) {
     },
   };
 
+  /** Kapalı menü grupları tarayıcıda hatırlanır. */
+  const COLLAPSE_KEY = 'otel:kapali-menu-gruplari';
+  const loadCollapsed = () => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]'));
+    } catch {
+      return new Set();
+    }
+  };
+  const collapsed = loadCollapsed();
+  const persistCollapsed = () => {
+    try {
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed]));
+    } catch {
+      /* gizli sekme vb. — hatırlamadan devam et */
+    }
+  };
+
+  const groupOf = (key) => allowed.find((v) => v.key === key)?.group;
+
+  function toggleGroup(group) {
+    if (collapsed.has(group)) collapsed.delete(group);
+    else collapsed.add(group);
+    persistCollapsed();
+    renderNav();
+  }
+
   function renderNav() {
     clear(nav);
-    let lastGroup = null;
+    const groups = new Map();
     for (const view of allowed) {
-      if (view.group !== lastGroup) {
-        nav.appendChild(h('div', { class: 'nav-group' }, view.group));
-        lastGroup = view.group;
-      }
+      if (!groups.has(view.group)) groups.set(view.group, []);
+      groups.get(view.group).push(view);
+    }
+
+    for (const [group, items] of groups) {
+      const open = !collapsed.has(group);
+      const activeInside = items.some((v) => v.key === current);
+
       nav.appendChild(h('button', {
+        class: `nav-group${open ? ' open' : ''}${activeInside ? ' has-active' : ''}`,
+        type: 'button',
+        'aria-expanded': String(open),
+        title: open ? `${group} bölümünü kapat` : `${group} bölümünü aç`,
+        onClick: () => toggleGroup(group),
+      },
+        h('span', { class: 'nav-caret' }, '▸'),
+        h('span', { class: 'nav-group-label' }, group),
+        !open && activeInside ? h('span', { class: 'nav-dot' }) : null,
+        h('span', { class: 'nav-count' }, String(items.length))));
+
+      if (!open) continue;
+
+      nav.appendChild(h('div', { class: 'nav-sub' }, ...items.map((view) => h('button', {
         class: `nav-item${view.key === current ? ' active' : ''}`,
         type: 'button',
         onClick: () => app.go(view.key),
-      }, h('span', { class: 'nav-icon' }, view.icon), view.label));
+      }, h('span', { class: 'nav-icon' }, view.icon), view.label))));
     }
   }
 

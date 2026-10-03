@@ -2,7 +2,7 @@
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 1.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 106 birim/API testi (`npm test`) + 51 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 106 birim/API testi (`npm test`) + 55 adımlı tarayıcı akış testi (`npm run test:browser`).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
 ---
@@ -100,8 +100,24 @@ Tarayıcı (src/)  ──HTTP+çerez──▶  Node sunucusu (server/)  ──�
 
 ### 3.1. Giderler Ana Menüsü ✅
 
-Menüde ayrı sayfalar: **Genel Harcamalar · Çalışanlar · Ekstra Çalışan · Vergiler**.
-Her sayfanın kendi veri giriş ekranı ve tablosu vardır.
+Menüdeki **Giderler** grubu beş sayfa içerir:
+
+| Sayfa | İçerik |
+| --- | --- |
+| **Giderler** (özet) | Tüm gider kaynaklarının birleşik listesi ve dönem toplamı |
+| **Genel Harcamalar** | Fatura, bakım, sarf malzeme vb. tekil gider kayıtları |
+| **Çalışanlar** | Sabit personel maaş + SGK |
+| **Ekstra Çalışan** | Günübirlik/geçici ödemeler |
+| **Vergiler** | Vergi raporu (§5.1) |
+
+**Giderler (özet) sayfası** dönemin bütün gider kalemlerini tek tabloda toplar:
+genel harcamalar (tekrarlayanlar ve otomatik açılan faturalar dâhil), personel
+maaş + SGK, ekstra çalışan ödemeleri ve toptancı faturaları. Her kaynak için
+toplam ve yüzde pay kartı gösterilir; karta tıklayınca ilgili sayfaya gidilir.
+Gider grupları (sabit/değişken/operasyonel/pazarlama) ve vergi yükü ayrıca özetlenir.
+
+> Kaynak kartları ve tablo satırları **kullanıcının yetkisine göre** filtrelenir:
+> `calisanlar` yetkisi olmayan kullanıcı personel kalemlerini bu listede görmez.
 
 ### 3.2. Çalışanlar (Sabit Personel) ✅
 
@@ -151,6 +167,7 @@ Her sayfanın kendi veri giriş ekranı ve tablosu vardır.
 | D2 | Başlangıç/bitiş sınırlarına uyar | `tekrarlayan gider başlangıç tarihinden önce ve bitişten sonra yansımaz` |
 | D3 | Yeni dönemde fatura 0 TL açılır, mükerrer açılmaz | `dönemsel faturalar yeni ayda 0 TL olarak açılır ve tekrar açılmaz` |
 | D4 | Pasif gider hesaptan düşer, silinmez | `pasif gider hesaplamadan düşer, kayıt silinmez` · tarayıcı: `Gider aktif/pasif anahtarı…` |
+| D5 | Tüm gider kaynakları tek listede toplanır | tarayıcı: `Giderler alt kategorisi tüm gider kalemlerini birleştiriyor` |
 
 ---
 
@@ -312,16 +329,24 @@ harf ve bir rakam.
 ## 9. Ana Menü Yapısı ✅
 
 ```
-GENEL      → Dashboard · Gelirler · Fiyat Girişi · Oda Ayarları
-GİDERLER   → Genel Harcamalar · Çalışanlar · Ekstra Çalışan · Vergiler
-RESTORAN   → Toptancılar
-KASA       → Gün Sonu / Kasa
-RAPORLAR   → Finansal Raporlar · Excel İşlemleri
-YÖNETİM    → Kullanıcı ve Yetki · Ayarlar
+▾ GENEL      → Dashboard · Gelirler · Fiyat Girişi · Oda Ayarları
+▾ GİDERLER   → Giderler · Genel Harcamalar · Çalışanlar · Ekstra Çalışan · Vergiler
+▾ RESTORAN   → Toptancılar
+▾ KASA       → Gün Sonu / Kasa
+▾ RAPORLAR   → Finansal Raporlar · Excel İşlemleri
+▾ YÖNETİM    → Kullanıcı ve Yetki · Ayarlar
 ```
 
-Menü, Admin'in verdiği yetkilere göre **dinamik** olarak oluşturulur: yetkisi olmayan
-girdi hiç basılmaz.
+* Menü, Admin'in verdiği yetkilere göre **dinamik** oluşturulur: yetkisi olmayan girdi
+  hiç basılmaz. Grup başlığındaki sayı, o gruptaki erişilebilir sayfa adedini gösterir.
+* **Grup başlıkları aç-kapa çalışır:** başlığa tıklandığında alt başlıklar açılır/kapanır.
+  Tercih tarayıcıda hatırlanır; kapalı bir gruptaki sayfaya gidildiğinde grup otomatik açılır
+  ve kapalı grupta aktif sayfa varsa başlıkta nokta işaretiyle belirtilir.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| M1 | Gruplar açılıp kapanır, tercih hatırlanır | tarayıcı: `Menü grupları açılıp kapanabiliyor ve tercih hatırlanıyor` |
+| M2 | Özet kartından ilgili sayfaya geçilir | tarayıcı: `Özet kartından ilgili gider sayfasına geçiliyor` |
 
 ---
 
@@ -340,7 +365,7 @@ src/core/             → tarayıcı ve sunucunun paylaştığı saf mantık
   finance.js          → personel, toptancı cari, kasa, vergi hesapları
   costEngine.js       → maliyet dağıtımı, fiyat eşikleri (bkz. PRD-BI.md)
   model.js · dates.js · fx.js · format.js · api.js · store.js
-src/ui/               → görünümler (login, dashboard, giderler, toptancılar, kasa,
+src/ui/               → görünümler (login, dashboard, giderler/özet, toptancılar, kasa,
                         vergi, kullanıcılar, excel, yazdırma, takvim, oda kartı…)
 test/                 → birim ve API testleri + opsiyonel tarayıcı akışları
 data/db.json          → veritabanı (sürüm kontrolüne dahil değildir)

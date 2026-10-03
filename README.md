@@ -44,7 +44,7 @@ cmd /c npm start
 
 ```bash
 npm test                    # 106 birim ve API testi (node:test, bağımlılıksız)
-npm run test:browser        # 51 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
+npm run test:browser        # 55 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 ```
 
 Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`, sunucu ayakta olmalı.
@@ -57,6 +57,7 @@ Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`
 | **Dashboard** | Kâr/zarar, marj, ADR, RevPAR, doluluk, gider dağılımı, başa baş, YOY | BI §3 |
 | **Gelirler** | Rezervasyon kaydı, kapasite ve çakışma kontrolü, TL/EUR, acenta komisyonu | §9 |
 | **Fiyat Girişi** | Takvim ızgarası, toplu güncelleme, fiyat kopyalama, maliyet altı fiyat uyarısı | BI §1.1, §3.3 |
+| **Giderler (özet)** | Genel harcama + personel + ekstra çalışan + toptancı faturalarının birleşik listesi, kaynak ve grup dağılımı | §3.1 |
 | **Genel Harcamalar** | Aktif/pasif anahtarı, dekont eki, tekrarlayan giderler, 5 dağıtım yöntemi | §3.4, §3.5 |
 | **Çalışanlar** | Sabit personel maaş + SGK, dönem bazlı, önceki aydan kopyalama | §3.2 |
 | **Ekstra Çalışan** | Günübirlik ödemeler, yalnızca girildiği döneme yansır | §3.3 |
@@ -77,6 +78,9 @@ Tarayıcı (src/)  ──HTTP + httpOnly çerez──▶  Node sunucusu (server/
 
 Yetkilendirme iki katmanlıdır: yetkisiz modül menüde görünmez **ve** ilgili API isteği
 sunucuda 403 ile reddedilir. Şifreler PBKDF2-SHA512 ile tuzlanarak saklanır.
+
+Sol menü gruplanmıştır ve grup başlıklarına tıklanarak açılıp kapanır; tercih tarayıcıda
+hatırlanır.
 
 ## Veri ve yedekleme
 

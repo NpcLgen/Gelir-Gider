@@ -240,6 +240,57 @@ await step('Yazdırma seçim ekranı açılır ve içerik seçilebilir', async (
   await page.click('.modal-header .icon-btn');
 });
 
+
+/* ------------------------------------- §9 Menü yapısı ve gider özeti ---- */
+
+await step('Menü grupları açılıp kapanabiliyor ve tercih hatırlanıyor', async () => {
+  const groups = await page.$$eval('.nav-group', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+  console.log(`   gruplar: ${groups.join(' | ')}`);
+  if (groups.length < 5) throw new Error(`grup sayısı: ${groups.length}`);
+
+  const before = (await page.$$('.nav-sub .nav-item')).length;
+  await page.locator('.nav-group').filter({ hasText: 'Giderler' }).click();
+  await page.waitForTimeout(200);
+  const after = (await page.$$('.nav-sub .nav-item')).length;
+  if (after >= before) throw new Error(`kapanmadı (${before} → ${after})`);
+
+  // Tercih yenilemeden sonra da korunur.
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('.layout', { timeout: 15000 });
+  const stillClosed = await page.$$eval('.nav-group.open', (els) => els.map((e) => e.textContent));
+  if (stillClosed.some((t) => t.includes('Giderler'))) throw new Error('kapalı tercih hatırlanmadı');
+
+  await page.locator('.nav-group').filter({ hasText: 'Giderler' }).click();
+  await page.waitForTimeout(200);
+  const items = await page.$$eval('.nav-sub .nav-item', (els) => els.map((e) => e.textContent.trim()));
+  if (!items.some((i) => i.includes('Çalışanlar'))) throw new Error('tekrar açılmadı');
+});
+
+await step('Giderler alt kategorisi tüm gider kalemlerini birleştiriyor', async () => {
+  await page.locator('.nav-item').filter({ hasText: /^.{0,4}Giderler$/ }).first().click();
+  await page.waitForSelector('.card:has-text("Tüm Gider Kalemleri")');
+  const kpis = await page.$$eval('.kpi', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+  console.log(`   ${kpis[0]}`);
+  for (const kaynak of ['Genel Harcamalar', 'Personel', 'Ekstra Çalışan', 'Toptancı']) {
+    if (!kpis.some((k) => k.includes(kaynak))) throw new Error(`${kaynak} kartı yok`);
+  }
+  const rows = (await page.$$('.card:has-text("Tüm Gider Kalemleri") tbody tr')).length;
+  if (rows < 5) throw new Error(`kalem sayısı az: ${rows}`);
+
+  // Personel ve toptancı faturaları da listeye giriyor mu?
+  const tablo = await page.textContent('.card:has-text("Tüm Gider Kalemleri")');
+  if (!tablo.includes('Ayşe Yıldız')) throw new Error('personel gideri listede yok');
+  if (!tablo.includes('Anadolu Gıda')) throw new Error('toptancı faturası listede yok');
+});
+
+await step('Özet kartından ilgili gider sayfasına geçiliyor', async () => {
+  // "Personel (Maaş + SGK)" kartı Çalışanlar sayfasına götürür.
+  await page.locator('.kpi-link').filter({ hasText: 'Personel' }).click();
+  await page.waitForTimeout(400);
+  const h1 = await page.textContent('h1');
+  if (!h1.includes('Çalışanlar')) throw new Error(h1);
+});
+
 /* ------------------------------------------------- §6 Yetkilendirme ---- */
 
 await step('Admin sınırlı yetkili kullanıcı oluşturur', async () => {
