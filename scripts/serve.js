@@ -6,6 +6,9 @@ import { readFile, stat } from 'node:fs/promises';
 import nodePath, { extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { handleApi } from '../server/api.js';
+import { DEFAULT_ADMIN, ensureDefaultAdmin } from '../server/auth.js';
+
 const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT || 5173);
 
@@ -57,6 +60,13 @@ export function createStaticServer() {
 
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
+
+      // API istekleri statik dosya çözümlemesinden önce ele alınır.
+      if (url.pathname.startsWith('/api/')) {
+        await handleApi(req, res, url);
+        return;
+      }
+
       let file = resolveFile(root, url.pathname);
       if (!file) {
         send(403, 'Erişim reddedildi');
@@ -99,6 +109,9 @@ export async function start() {
     process.exit(1);
   }
 
+  // Kurulumda varsayılan Admin hesabı oluşturulur (PRD §7).
+  const admin = await ensureDefaultAdmin();
+
   const server = createStaticServer();
   const MAX_TRIES = 20;
   let attempt = 0;
@@ -126,6 +139,14 @@ export async function start() {
     console.log(`      http://127.0.0.1:${actual}`);
     console.log('');
     console.log(`  Klasör: ${root}`);
+    if (admin) {
+      console.log('');
+      console.log('  İlk kurulum: varsayılan yönetici hesabı oluşturuldu');
+      console.log(`      Kullanıcı adı : ${DEFAULT_ADMIN.username}`);
+      console.log(`      Şifre         : ${DEFAULT_ADMIN.password}`);
+      console.log('      (İlk girişte şifre değiştirmeniz istenecek.)');
+    }
+    console.log('');
     console.log('  Durdurmak için: Ctrl + C');
     console.log('');
   });
