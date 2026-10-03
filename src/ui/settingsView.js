@@ -4,11 +4,12 @@
  * kişi başı sarfiyat tarifesi ve veri yönetimi.
  */
 
-import { ALLOCATION_METHODS, CURRENCIES, EXPENSE_GROUPS, FX_SOURCES, TARIFF_BASIS } from '../core/catalog.js';
+import { ALLOCATION_METHODS, CURRENCIES, EXPENSE_CATEGORIES, EXPENSE_GROUPS, FX_SOURCES, TARIFF_BASIS,
+  UTILITY_KINDS, UTILITY_LABELS } from '../core/catalog.js';
 import { createTariffItem } from '../core/model.js';
 import { fetchTcmbRate } from '../core/fx.js';
 import { formatDecimal, formatMoney } from '../core/format.js';
-import { clear, confirmDialog, errorList, field, h, select, toast } from './dom.js';
+import { clear, errorList, field, h, select, toast } from './dom.js';
 
 export function settingsView(app) {
   const state = app.store.getState();
@@ -17,9 +18,10 @@ export function settingsView(app) {
   const tariffBox = h('div', { class: 'stack tight' });
   const categoryBox = h('div', { class: 'stack tight' });
 
-  const save = () => {
+  const save = async () => {
+    clear(errorBox).classList.add('hidden');
     try {
-      app.store.saveSettings(settings);
+      await app.store.saveSettings(settings);
       toast('Ayarlar kaydedildi.');
       app.refresh();
     } catch (err) {
@@ -62,8 +64,8 @@ export function settingsView(app) {
       const rate = await fetchTcmbRate({ source: settings.fx.source });
       settings.fx.rate = rate;
       rateInput.value = String(rate);
-      app.store.saveSettings(settings);
-      app.store.recordRate(new Date().toISOString().slice(0, 10), rate);
+      await app.store.saveSettings(settings);
+      await app.store.recordRate(new Date().toISOString().slice(0, 10), rate);
       fxStatus.textContent = `TCMB kuru alındı: 1 € = ${formatDecimal(rate)} ₺`;
       toast('Kur güncellendi.');
       app.refresh();
@@ -214,6 +216,8 @@ export function settingsView(app) {
 
     h('section', { class: 'card stack' },
       h('h3', {}, 'Veri Yönetimi'),
+      h('p', { class: 'muted small' },
+        'Veriler sunucudaki data/db.json dosyasında tutulur. Düzenli yedek almanız önerilir.'),
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn primary', type: 'button', onClick: save }, '💾 Ayarları Kaydet'),
         h('button', {
@@ -221,30 +225,85 @@ export function settingsView(app) {
           onClick: () => {
             const blob = new Blob([app.store.exportJSON()], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
-            const a = h('a', { href: url, download: `gelir-gider-${new Date().toISOString().slice(0, 10)}.json` });
+            const a = h('a', { href: url, download: `otel-finans-${new Date().toISOString().slice(0, 10)}.json` });
             document.body.appendChild(a); a.click(); a.remove();
             URL.revokeObjectURL(url);
+            toast('Yedek indirildi.');
           },
         }, '⬇️ Yedek Al (JSON)'),
-        h('label', { class: 'btn ghost file-btn' }, '⬆️ Yedekten Yükle',
+        app.me()?.isAdmin ? h('button', {
+          class: 'btn ghost demo-btn', type: 'button',
+          onClick: async () => {
+            const sure = window.confirm(
+              'DİKKAT: Demo verisi yüklenecek.\n\nMevcut oda, rezervasyon, fiyat, gider, personel, toptancı ve kasa kayıtlarının TAMAMI silinip örnek verilerle değiştirilecek. Kullanıcı hesapları korunur.\n\nDevam edilsin mi?',
+            );
+            if (!sure) return;
+            const result = await app.store.loadDemoData();
+            toast(`Demo verisi yüklendi: ${result.rooms} oda, ${result.reservations} rezervasyon.`);
+            app.refresh();
+          },
+        }, '🧪 Demo Verisi Yükle') : null)),
+
+    h('section', { class: 'card stack' },
+      h('h3', {}, 'Dönemsel Fatura Kalemleri'),
+      h('p', { class: 'muted small' },
+        'Her ayın başında burada tanımlı kalemler 0 TL olarak otomatik açılır; fatura gelince tutarı güncellersiniz.'),
+      billsEditor(app, settings)));
+}
+
+/** PRD §3.5 — düzenli fatura şablonları. */
+function billsEditor(app, settings) {
+  const bills = [...(settings.bills ?? [])];
+  const box = h('div', { class: 'stack tight' });
+
+  const render = () => {
+    clear(box);
+    if (!bills.length) box.appendChild(h('p', { class: 'muted small' }, 'Tanımlı fatura kalemi yok.'));
+    bills.forEach((bill, index) => {
+      box.appendChild(h('div', { class: 'bill-row' },
+        h('input', {
+          type: 'text', value: bill.label, placeholder: 'Elektrik faturası',
+          onInput: (e) => { bills[index].label = e.target.value; },
+        }),
+        select({ onChange: (e) => { bills[index].category = e.target.value; } },
+          EXPENSE_CATEGORIES.map((c) => ({ value: c.key, label: c.label })), bill.category),
+        select({ onChange: (e) => { bills[index].weightKind = e.target.value; } },
+          UTILITY_KINDS.map((k) => ({ value: k, label: UTILITY_LABELS[k] })), bill.weightKind),
+        h('label', { class: 'check-inline small' },
           h('input', {
-            type: 'file', accept: 'application/json', hidden: true,
-            onChange: async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              try {
-                app.store.importJSON(await file.text());
-                toast('Veriler içe aktarıldı.');
-                app.refresh();
-              } catch {
-                toast('Dosya okunamadı.', 'error');
-              }
-            },
-          })),
+            type: 'checkbox', checked: bill.active !== false,
+            onChange: (e) => { bills[index].active = e.target.checked; },
+          }), 'Aktif'),
         h('button', {
-          class: 'btn danger ghost', type: 'button',
-          onClick: () => confirmDialog('Tüm veriler demo setine sıfırlansın mı?', () => {
-            app.store.reset({ withSeed: true }); app.refresh(); toast('Demo verisi yüklendi.', 'warn');
-          }),
-        }, '↺ Demo Verisine Dön'))));
+          class: 'icon-btn', type: 'button', title: 'Kaldır',
+          onClick: () => { bills.splice(index, 1); render(); },
+        }, '✕')));
+    });
+  };
+  render();
+
+  return h('div', { class: 'stack tight' },
+    h('div', { class: 'bill-head' },
+      h('span', {}, 'Fatura Adı'), h('span', {}, 'Kategori'), h('span', {}, 'Gider Türü'), h('span', {}, ''), h('span', {}, '')),
+    box,
+    h('div', { class: 'row gap' },
+      h('button', {
+        class: 'btn small ghost', type: 'button',
+        onClick: () => {
+          bills.push({
+            key: `bill_${Math.random().toString(16).slice(2, 8)}`,
+            label: '', category: 'utility_electricity', allocation: 'weighted',
+            weightKind: 'electricity', active: true,
+          });
+          render();
+        },
+      }, '＋ Fatura Kalemi Ekle'),
+      h('button', {
+        class: 'btn small primary', type: 'button',
+        onClick: async () => {
+          await app.store.saveBills(bills.filter((b) => b.label.trim()));
+          toast('Fatura kalemleri kaydedildi.');
+          app.refresh();
+        },
+      }, '💾 Kaydet')));
 }

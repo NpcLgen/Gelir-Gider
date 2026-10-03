@@ -1,75 +1,92 @@
-# Butik Otel BI · Gelir-Gider ve Kârlılık Yönetim Sistemi
+# Otel Finans ve Yönetim Sistemi
 
-9 odalı bir butik otelin **finansal verimliliğine, oda bazlı maliyetlerine ve net
-kârlılığına** odaklanan bir BI aracı. Ön büro programı değil: gelir-gider dengesini
-şeffaflaştırır, ortak giderleri odalara dağıtır ve oda başına net kârı hesaplar.
+Otelin **finansal verimliliğine, oda bazlı maliyetlerine ve net kârlılığına** odaklanan,
+kullanıcı/yetki yönetimi olan bir yönetim sistemi. Ön büro programı değil: gelir-gider
+dengesini şeffaflaştırır, maliyetleri odalara dağıtır, vergi ve kasa durumunu raporlar.
 
-Tüm gereksinimler ve hesaplama kuralları: **[PRD.md](PRD.md)**
+* Gereksinimler: **[PRD.md](PRD.md)** — giriş/yetki, Excel, giderler, toptancı cari, vergi, kasa
+* Ek belge: **[PRD-BI.md](PRD-BI.md)** — oda kârlılığı, maliyet dağıtımı, fiyat tavsiyesi
 
 ## Hızlı başlangıç
 
 ```bash
 npm start     # sunucuyu başlatır, adresi ekrana yazar (varsayılan http://127.0.0.1:5173)
-npm test      # 78 birim testi (node:test, bağımlılıksız)
 ```
 
-Port doluysa sunucu çökmez; sıradaki boş portu seçip açılacak adresi ekrana yazar.
+İlk çalıştırmada varsayılan yönetici hesabı oluşturulur ve ekrana yazılır:
+
+| Kullanıcı Adı | Şifre |
+| --- | --- |
+| `Admin` | `Admin2026` |
+
+İlk girişte şifre değiştirmeniz **zorunludur**. Ardından **Ayarlar → 🧪 Demo Verisi Yükle**
+ile örnek bir otelin verileriyle sistemi gezebilir, sonra kendi verinizi girebilirsiniz.
+
+Port doluysa sunucu çökmez; sıradaki boş portu seçip adresi yazar.
 Belirli bir port için: `PORT=8080 npm start` (Windows PowerShell: `$env:PORT="8080"; npm start`).
 
-Derleme adımı ve bağımlılık yoktur — `index.html` doğrudan ES modülleri yükler.
-Uygulamayı `index.html`'e çift tıklayarak açamazsınız (ES modülleri `file://` üzerinden
-engellenir); her zaman yukarıdaki sunucuyla açın.
-Veriler tarayıcıda `localStorage`'da tutulur; ilk açılışta 9 odalı demo verisi gelir.
+Derleme adımı ve harici bağımlılık yoktur. Uygulamayı `index.html`'e çift tıklayarak
+açamazsınız; her zaman yukarıdaki sunucuyla açın.
 
-Tarayıcı akış testi opsiyoneldir (Playwright gerektirir, depo bağımlılığı değildir):
+### Windows'ta çalıştırma
+
+Başlat'a sağ tıklayın → **Terminal**, sonra bu beş satırı yapıştırın:
+
+```powershell
+cd $env:USERPROFILE\Desktop
+Invoke-WebRequest "https://github.com/NpcLgen/Gelir-Gider/archive/refs/heads/claude/advanced-room-profile-inventory-zqdywk.zip" -OutFile otel.zip
+Expand-Archive otel.zip -DestinationPath . -Force
+cd Gelir-Gider-claude-advanced-room-profile-inventory-zqdywk
+cmd /c npm start
+```
+
+## Testler
 
 ```bash
-npm i -D playwright && npx playwright install chromium
-npm start &                 # sunucu ayakta olmalı
-npm run test:browser        # 32 adımlı uçtan uca akış
+npm test                    # 106 birim ve API testi (node:test, bağımlılıksız)
+npm run test:browser        # 51 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 ```
+
+Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`, sunucu ayakta olmalı.
 
 ## Modüller
 
 | Modül | Ne yapar | PRD |
 | --- | --- | --- |
-| **Dashboard** | Kâr/zarar, marj, ADR, RevPAR, doluluk, kişi başı maliyet; gider dağılım grafiği, başa baş noktası, YOY analizi | §3 |
-| **Fiyat Tavsiyesi** | Oda başına gecelik maliyet, alt limit (altı zarar), başa baş ve tavsiye fiyatı; fiyat girerken ve rezervasyon açarken canlı zarar uyarısı | §3.3 |
-| **Fiyat / Gelir Takvimi** | Odalar × günler fiyat ızgarası, toplu güncelleme (hafta içi/hafta sonu), fiyat kopyalama, boş gün vurgulama | §1.1 |
-| **Gider Yönetimi** | Aktif/pasif anahtarı, dekont eki, tekrarlayan giderler, grup filtreleri, beş dağıtım yöntemi | §1.2, §2.3 |
-| **Rezervasyonlar** | Kapasiteyle sınırlı kişi sayısı, çakışma kontrolü, TL/EUR tutar, acenta komisyonu | §8.4.2 |
-| **Oda Ayarları (Oda Kartı)** | Numara + konsept ismi, yatak yapılandırması, demirbaş checkbox modülü, canlı maliyet etkisi | §8.4 |
-| **Finansal Raporlar** | Dönem özeti, oda kârlılığı, gider dökümü; PDF / Excel / CSV dışa aktarım | §5, §6.1 |
-| **Sistem Ayarları** | Dağıtım yöntemi A/B/C, hedef marj, kur kaynağı, kategori yöneticisi, kişi başı tarife | §8 |
+| **Giriş & Yetki** | Kullanıcı girişi, 18 modül için aç/kapa yetkiler, dinamik menü, denetim kaydı | §1, §6, §7 |
+| **Dashboard** | Kâr/zarar, marj, ADR, RevPAR, doluluk, gider dağılımı, başa baş, YOY | BI §3 |
+| **Gelirler** | Rezervasyon kaydı, kapasite ve çakışma kontrolü, TL/EUR, acenta komisyonu | §9 |
+| **Fiyat Girişi** | Takvim ızgarası, toplu güncelleme, fiyat kopyalama, maliyet altı fiyat uyarısı | BI §1.1, §3.3 |
+| **Genel Harcamalar** | Aktif/pasif anahtarı, dekont eki, tekrarlayan giderler, 5 dağıtım yöntemi | §3.4, §3.5 |
+| **Çalışanlar** | Sabit personel maaş + SGK, dönem bazlı, önceki aydan kopyalama | §3.2 |
+| **Ekstra Çalışan** | Günübirlik ödemeler, yalnızca girildiği döneme yansır | §3.3 |
+| **Vergiler** | KDV (hesaplanan/indirilecek/ödenecek), konaklama vergisi, turizm payı, gelir vergisi | §5.1 |
+| **Toptancılar** | Cari hesap: fatura/ödeme, yürüyen bakiye, ad/fatura no/tarih filtreleri | §4 |
+| **Gün Sonu / Kasa** | Beklenen kasa ile fiili kasa karşılaştırması, kasa açığı/fazlası | §5.2 |
+| **Finansal Raporlar** | Dönem özeti, oda kârlılığı, gider dökümü; PDF/Excel/CSV | §2.1 |
+| **Excel İşlemleri** | Örnek şablon, ön kontrollü içe aktarım, yetkiye göre dışa aktarım | §2.1 |
+| **Oda Ayarları** | Oda kartı: kapasite, yatak düzeni, demirbaş listesi, maliyet katsayıları | BI §8.4 |
+| **Ayarlar** | Dağıtım yöntemi, hedef marj, kur, kategoriler, dönemsel fatura kalemleri | §8 |
 
-## Maliyet dağıtımı — özet
+## Mimari
 
 ```
-ağırlık(oda, tür) = yöntemAğırlığı(oda, tür) × ( sabitPay + (1 − sabitPay) × dolulukOranı )
-
-yöntemAğırlığı =  A → 1                     (eşit)
-                  B → oda m²                (metrekare bazlı)
-                  C → maliyetÇarpanı × (1 + Σ demirbaş katsayıları)   (özel katsayı)
+Tarayıcı (src/)  ──HTTP + httpOnly çerez──▶  Node sunucusu (server/)  ──▶  data/db.json
+   dinamik menü                                oturum · yetki · doğrulama · denetim
 ```
 
-| Gider | Dağıtım tabanı |
-| --- | --- |
-| Jakuzi motor arızası | %100 → ilgili oda |
-| Kahvaltı, su, buklet | kişi-gece oranı (Cost Per Guest) |
-| Elektrik, su, doğalgaz | yukarıdaki ağırlık formülü |
-| Kira, personel | satıştaki odalara eşit |
-| Komisyon, vergi | dağıtılmaz (işletme geneli) |
+Yetkilendirme iki katmanlıdır: yetkisiz modül menüde görünmez **ve** ilgili API isteği
+sunucuda 403 ile reddedilir. Şifreler PBKDF2-SHA512 ile tuzlanarak saklanır.
 
-Tutarlar girildikleri para biriminde saklanır, **kendi tarihlerinin kuruyla** TL'ye
-çevrilir; sağ üstteki `₺ / €` anahtarı raporları anında diğer para biriminde gösterir.
+## Veri ve yedekleme
 
-Ayrıntılar ve örnek senaryo: [PRD.md §2.1](PRD.md#21-dinamik-maliyet-dağıtım-algoritması-cost-allocation-) ·
-[PRD.md §8.4](PRD.md#84-gelişmiş-oda-profili-ve-envanter-kartları-kişi-bazlı-maliyet-altyapısı-)
+Tüm veriler sunucudaki `data/db.json` dosyasındadır (atomik yazma). Bu dosyayı kopyalamak
+tam yedek almak demektir; ayrıca **Ayarlar → Yedek Al (JSON)** ile indirilebilir.
 
 ## Bilinen sınırlar
 
-* **TCMB kuru:** Servis tarayıcıya CORS başlığı göndermediğinden doğrudan çekim
-  engellenebilir; bu durumda manuel kur geçerli kalır. Kesintisiz otomatik kur için
-  sunucu tarafı proxy Faz 2 kapsamındadır (PRD §2.4).
-* **Kalıcılık:** Veriler tek tarayıcıda `localStorage`'da tutulur. Çok cihaz/çok
-  kullanıcı için ilişkisel veritabanı Faz 2'dedir (PRD §5). Yedek: Ayarlar → JSON dışa aktar.
+* **TCMB otomatik kur:** Servis tarayıcıya CORS başlığı göndermediğinden doğrudan çekim
+  engellenebilir; bu durumda manuel kur geçerli kalır (PRD §11).
+* **Tek sunucu:** Sistem tek makinede çalışır; ağdaki diğer bilgisayarlardan erişim için
+  sunucunun IP adresi ve güvenlik duvarı ayarı gerekir. HTTPS kullanılmıyorsa yerel ağ
+  dışına açmayın.

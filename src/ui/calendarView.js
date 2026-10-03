@@ -6,7 +6,7 @@
 
 import { CURRENCIES } from '../core/catalog.js';
 import { priceVerdict } from '../core/costEngine.js';
-import { addDays, eachDate, isWeekend, monthPeriod, shiftMonth } from '../core/dates.js';
+import { addDays, eachDate, isWeekend, monthPeriod, period as makePeriod, shiftMonth } from '../core/dates.js';
 import { roomLabel } from '../core/model.js';
 import { formatPercent } from '../core/format.js';
 import { append, clear, errorList, field, h, openModal, select, toast } from './dom.js';
@@ -209,9 +209,10 @@ export function openPriceEditor(app, room, date, entry) {
 
       renderAdvice();
 
-      const save = () => {
+      const save = async () => {
+        clear(errorBox).classList.add('hidden');
         try {
-          app.store.savePrice(room.id, date, draft);
+          await app.store.savePrice(room.id, date, draft);
           close();
           app.refresh();
         } catch (err) {
@@ -231,7 +232,7 @@ export function openPriceEditor(app, room, date, entry) {
         h('div', { class: 'row end gap' },
           entry ? h('button', {
             class: 'btn danger ghost', type: 'button',
-            onClick: () => { app.store.clearPrice(room.id, date); close(); app.refresh(); },
+            onClick: async () => { await app.store.clearPrice(room.id, date); close(); app.refresh(); },
           }, 'Fiyatı Sil') : null,
           h('button', { class: 'btn ghost', type: 'button', onClick: close }, 'Vazgeç'),
           // onClick açıkça verilir: tarayıcının form doğrulaması kaydetmeyi sessizce engellemesin.
@@ -303,9 +304,11 @@ export function openBulkEditor(app) {
           h('button', { class: 'btn ghost', type: 'button', onClick: close }, 'Vazgeç'),
           h('button', {
             class: 'btn primary', type: 'submit',
-            onClick: () => {
+            onClick: async () => {
               try {
-                const written = app.store.bulkPrice(draft);
+                const entries = buildBulkEntries(app, draft);
+                if (!entries.length) throw new Error('Uygulanacak gün bulunamadı; fiyat ve tarih aralığını kontrol edin.');
+                const { written } = await app.store.bulkPriceEntries(entries);
                 toast(`${written} güne fiyat uygulandı.`);
                 close();
                 app.refresh();
@@ -319,26 +322,54 @@ export function openBulkEditor(app) {
   });
 }
 
+
+/** Toplu güncelleme seçimlerini sunucuya gönderilecek gün listesine çevirir. */
+function buildBulkEntries(app, draft) {
+  const { prices } = app.store.getState();
+  const entries = [];
+  if (!draft.roomIds?.length || !draft.from || !draft.to || draft.from > draft.to) return entries;
+  for (const roomId of draft.roomIds) {
+    for (const date of eachDate(makePeriod(draft.from, draft.to))) {
+      const amount = isWeekend(date) ? draft.weekendAmount : draft.weekdayAmount;
+      if (!(amount > 0)) continue;
+      if (!draft.overwrite && prices?.[roomId]?.[date]?.amount > 0) continue;
+      entries.push({ roomId, date, amount, currency: draft.currency });
+    }
+  }
+  return entries;
+}
+
 export function openCopyEditor(app) {
   const { rooms } = app.store.getState();
   const p = app.period();
   const sellable = rooms.filter((r) => r.status !== 'passive');
 
-  const run = (mode, close) => {
-    const roomIds = sellable.map((r) => r.id);
-    let payload;
-    if (mode === 'week') {
-      payload = {
-        roomIds,
-        sourceFrom: addDays(p.from, -7), sourceTo: addDays(p.from, -1),
-        targetFrom: p.from, overwrite: false,
-      };
-    } else {
-      const previous = monthPeriod(shiftMonth(p.from.slice(0, 7), -1));
-      payload = { roomIds, sourceFrom: previous.from, sourceTo: previous.to, targetFrom: p.from, overwrite: false };
+  const run = async (mode, close) => {
+    const { prices } = app.store.getState();
+    const source = mode === 'week'
+      ? { from: addDays(p.from, -7), to: addDays(p.from, -1) }
+      : (() => { const prev = monthPeriod(shiftMonth(p.from.slice(0, 7), -1)); return { from: prev.from, to: prev.to }; })();
+
+    const sourceDates = eachDate(makePeriod(source.from, source.to));
+    const entries = [];
+    for (const room of sellable) {
+      sourceDates.forEach((date, index) => {
+        const entry = prices?.[room.id]?.[date];
+        if (!entry?.amount) return;
+        const target = addDays(p.from, index);
+        // Dolu günler korunur, yalnızca boş günler doldurulur.
+        if (prices?.[room.id]?.[target]?.amount > 0) return;
+        entries.push({ roomId: room.id, date: target, amount: entry.amount, currency: entry.currency });
+      });
     }
-    const written = app.store.copyPrices(payload);
-    toast(written ? `${written} güne fiyat kopyalandı.` : 'Kopyalanacak fiyat bulunamadı.', written ? 'ok' : 'warn');
+
+    if (!entries.length) {
+      toast('Kopyalanacak fiyat bulunamadı.', 'warn');
+      close();
+      return;
+    }
+    const { written } = await app.store.bulkPriceEntries(entries);
+    toast(`${written} güne fiyat kopyalandı.`);
     close();
     app.refresh();
   };

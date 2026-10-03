@@ -455,3 +455,100 @@ table.calendar th, table.calendar td { border: none; padding: 2px; }
   margin: 0; padding: 12px 16px; border-top: 1px solid var(--line);
   color: var(--bad); font-weight: 600; font-size: 0.88rem;
 }
+
+/* ===================== Giriş ekranı (PRD §1.1) ===================== */
+
+.login-page {
+  min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  background: radial-gradient(900px 500px at 50% 0%, #1d2740, var(--bg));
+}
+.login-card {
+  width: 100%; max-width: 420px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+  padding: 28px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.login-brand h1 { font-size: 1.15rem; margin: 0; }
+.login-brand p { margin: 0; font-size: 0.85rem; }
+.btn.wide { width: 100%; justify-content: center; }
+.center { text-align: center; }
+
+/* ===================== Menü grupları ve hesap menüsü ===================== */
+
+.nav-group {
+  color: var(--muted); font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 12px 12px 4px;
+}
+.account-menu { position: relative; }
+.account-menu summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.account-menu summary::-webkit-details-marker { display: none; }
+.account-chip { padding: 5px 10px 5px 5px; }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent); color: #07101f;
+  display: grid; place-items: center; font-weight: 700; font-size: 0.8rem;
+}
+.popover.right { left: auto; right: 0; }
+
+/* ===================== Kullanıcı yetkileri ===================== */
+
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.perm-group h4 { margin-top: 0; }
+.perm-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px;
+  margin-bottom: 6px; cursor: pointer; background: var(--bg-soft); font-size: 0.88rem;
+}
+.perm-row.checked { background: var(--accent-soft); border-color: var(--accent); }
+.perm-row input { display: none; }
+.toggle-mini {
+  width: 32px; height: 18px; border-radius: 999px; background: var(--card-2);
+  border: 1px solid var(--line); position: relative; flex: none; transition: background .15s ease;
+}
+.toggle-mini::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%; background: var(--muted); transition: transform .15s ease;
+}
+.perm-row.checked .toggle-mini { background: rgba(25, 158, 112, 0.4); border-color: var(--good); }
+.perm-row.checked .toggle-mini::after { transform: translateX(14px); background: var(--good); }
+
+/* ===================== Toptancı cari ===================== */
+
+.supplier-card { display: flex; flex-direction: column; gap: 12px; }
+.supplier-balance { text-align: right; }
+.supplier-balance strong { font-size: 1.1rem; display: block; }
+.supplier-summary { flex-direction: row; flex-wrap: wrap; gap: 20px; }
+.supplier-summary .kv { gap: 8px; }
+.supplier-ledger { border-top: 1px solid var(--line); padding-top: 12px; }
+
+/* ===================== Excel ve kasa ===================== */
+
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg-btn {
+  background: transparent; border: none; color: var(--muted);
+  padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.seg-btn.active { background: var(--accent); color: #07101f; }
+.help-btn { border-color: var(--accent); color: #cfe0ff; }
+.cash-result { margin-top: 4px; }
+.row-strong td { background: rgba(255, 255, 255, 0.03); }
+.bill-row { display: grid; grid-template-columns: 1.4fr 1.2fr 1fr auto auto; gap: 8px; align-items: center; }
+.bill-head {
+  display: grid; grid-template-columns: 1.4fr 1.2fr 1fr auto auto; gap: 8px;
+  color: var(--muted); font-size: 0.74rem; text-transform: uppercase;
+}
+
+/* ===================== Dinamik yazdırma (PRD §2.2) ===================== */
+
+.print-option { padding: 6px 2px; }
+@media print {
+  .print-hidden { display: none !important; }
+}
+
+@media (max-width: 980px) {
+  .perm-grid { grid-template-columns: 1fr; }
+  .bill-row, .bill-head { grid-template-columns: 1fr 1fr; }
+  .supplier-summary { flex-direction: column; gap: 6px; }
+}

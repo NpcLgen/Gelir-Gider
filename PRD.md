@@ -1,476 +1,357 @@
-# Ürün Gereksinimleri Belgesi (PRD) — 9 Odalı Butik Otel
-## Gelir-Gider ve Kârlılık Yönetim Sistemi
+# Otel Finans ve Yönetim Sistemi
+## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 1.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 78 birim testi (`npm test`) + 32 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 106 birim/API testi (`npm test`) + 51 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
 ---
 
-## Proje Vizyonu ve Kapsamı
+## Mimari Notu
 
-Bu belge, 9 odalı bir butik otelin operasyonel süreçlerinden ziyade, tamamen finansal
-verimliliğine, oda bazlı maliyetlerine ve genel kârlılığına odaklanan yazılımın temel
-özelliklerini tanımlar. Bu sistem bir otel yönetim sistemi (PMS) veya ön büro programı
-değil; işletmenin gelir-gider dengesini şeffaflaştıran, maliyetleri dağıtan ve net
-kârlılığı hesaplayan özel bir **finansal zekâ (BI)** aracıdır.
+Bu PRD login, rol/modül yetkisi ve **"yetkisiz işlemlerin hem arayüz hem sunucu/API
+seviyesinde engellenmesi"** istiyor. Bunlar yalnızca tarayıcı tarafında tutulan bir
+uygulamayla sağlanamaz. Bu nedenle sistem iki katmanlıdır:
 
-> **Rezervasyon modülü hakkında not:** Sistem ön büro işlevi üstlenmez; rezervasyon
-> kaydı yalnızca *gerçekleşen geliri* ve *kişi-gece* sayısını üretmek için tutulur —
-> kişi başı maliyet algoritmasının (§8.4) tek doğru girdisi budur.
+```
+Tarayıcı (src/)  ──HTTP+çerez──▶  Node sunucusu (server/)  ──▶  data/db.json
+   dinamik menü                     oturum · yetki · doğrulama · denetim kaydı
+```
 
-**Durum etiketleri:** ✅ uygulandı · 🔜 Faz 2/3.
-
----
-
-## 1. Temel Arayüz ve Gelir-Gider Modülleri
-
-### 1.1. Odalar ve Fiyatlandırma Modülü (Gelir Projeksiyonu) ✅
-
-Otelin günlük fiyat stratejisinin ve beklenen/gerçekleşen gelirlerinin yönetildiği ana merkez.
-*Uygulama: `src/ui/calendarView.js`, `store.bulkPrice` / `store.copyPrices`.*
-
-* **Takvim Görünümlü Fiyat Girişi:** Odalar × günler ızgarası; her hücre tıklanarak o
-  gecenin fiyatı girilir. Fiyat `prices[odaId][tarih]` olarak saklanır.
-* **Çoklu Para Birimi (Çift Kur Desteği):** Fiyatlar TL veya EUR girilebilir; raporlama
-  anında §2.4'teki kurla çevrilir. Sağ üstteki `[₺ TRY] / [€ EUR]` anahtarı tüm ekranı
-  anında diğer para birimine döndürür.
-* **Toplu Fiyat Güncelleme (Bulk Edit):** Tarih aralığı + oda seçimiyle tek tıkta fiyat
-  atama. **Hafta içi** (Pazar–Perşembe) ve **hafta sonu** (Cuma–Cumartesi) için ayrı
-  tutar girilebilir; "dolu günleri de güncelle" seçeneği kapatılırsa yalnızca boş günler
-  doldurulur.
-* **Fiyatları Kopyala:** `Geçen Haftayı Kopyala` / `Geçen Ayı Kopyala` — kaynak aralıktaki
-  fiyatlar gün gün hedefe yazılır, mevcut fiyatlar korunur.
-* **Boş Günleri Vurgula:** Fiyat girilmemiş günleri kırmızı çerçeveyle belirginleştirir.
-* **Renk kodlaması:** yeşil = fiyat girilmiş, kırmızı = eksik gün, mavi nokta = dolu oda.
-* **Göstergeler:** Takvim hedef geliri (tam doluluk), gerçekleşen gelir, gerçekleşme oranı
-  ve fiyat girilme oranı.
-
-### 1.2. Gider Yönetimi Modülü ✅
-
-*Uygulama: `src/ui/expensesView.js`.*
-
-* **Hızlı Gider Ekleme Paneli:** Ekranın sağ alt köşesinde sabit duran `+` (FAB) butonu;
-  `[+ Gider Ekle]` ve `[+ Hızlı Fiyat Gir]` seçeneklerini açar. Modal alanları:
-  gider ismi, tutar, para birimi, tarih, kategori, tedarikçi, dağıtım yöntemi.
-* **Aktif/Pasif Gider Yönetimi:** Her satırın solundaki toggle switch. Pasife alınan
-  gider **silinmez**, yalnızca kârlılık hesabından anında düşer (senaryo testi için).
-* **Oda Spesifik Gider Ataması:** Gider "İşletme Geneli" veya "Spesifik Oda Gideri"
-  olarak ayrılır.
-  * *Örnek senaryo:* 101 numaralı odada jakuzi bulunduğu için bu odanın maliyet çarpanı
-    yüksek girilir (§8.1 Seçenek C) **veya** doğrudan odaya "Jakuzi Bakım/Onarım
-    Maliyeti" yazılır (§8.3).
+* `npm start` tek komutla hem arayüzü hem API'yi ayağa kaldırır; harici bağımlılık yoktur.
+* Veriler sunucudaki `data/db.json` dosyasında tutulur (atomik yazma).
+* **Her uç nokta kendi modül iznini doğrular**; arayüz atlatılsa bile istek 403 döner.
 
 ---
 
-## 2. Finansal Zekâ ve Maliyet Analiz Özellikleri
+## 1. Giriş ve Güvenlik
 
-### 2.1. Dinamik Maliyet Dağıtım Algoritması (Cost Allocation) ✅
+### 1.1. Kullanıcı Giriş Paneli (Login) ✅
 
-*Uygulama: `src/core/costEngine.js`.*
+*Uygulama: `src/ui/login.js`, `server/auth.js`.*
 
-Sistem giderleri beş yöntemden biriyle dağıtır:
+* Uygulama açılışında kullanıcı doğrudan sisteme erişemez; giriş ekranı zorunludur.
+* Kullanıcı adı ve şifre ile kimlik doğrulama yapılır. Şifreler **PBKDF2-SHA512**
+  (150.000 tur, kayıt başına tuz) ile saklanır; düz metin hiçbir yerde tutulmaz.
+* Oturum `httpOnly`, `SameSite=Strict` çerezle taşınır (12 saat, kayan süre).
+* Başarılı girişten sonra kullanıcının yetkileri okunur; menü bu yetkilerden kurulur.
+* Yetkisi bulunmayan menü ve sayfalar gösterilmez; adres çubuğundan gidilse bile açılmaz.
 
-| Yöntem | Kullanım | Dağıtım tabanı |
+**Kabul kriterleri ve doğrulayan testler**
+
+| # | Kriter | Test |
 | --- | --- | --- |
-| `direct` | Odaya özel bakım/onarım/demirbaş, zayi | %100 seçili oda |
-| `perGuest` | Kahvaltı, sarf malzeme, çamaşırhane | Kişi-gece oranı |
-| `weighted` | Elektrik, su, doğalgaz | §8.1'deki yöntem (A/B/C) |
-| `equal` | Personel, kira, muhasebe | Satıştaki odalara eşit |
-| `general` | Komisyon, vergi, pazarlama | Dağıtılmaz, işletme geneli |
+| G1 | Login yapılmadan ana ekrana erişilemez | `oturum açılmadan veri uçlarına erişilemez` · tarayıcı: `Giriş yapılmadan ana ekrana erişilemiyor` |
+| G2 | Geçerli bilgilerle giriş başarılı olur | `varsayılan Admin hesabıyla giriş yapılır…` |
+| G3 | Hatalı bilgilerde uygun hata gösterilir | `hatalı kullanıcı adı veya şifre aynı mesajla reddedilir` · tarayıcı: `Hatalı bilgilerde hata mesajı gösteriliyor` |
+| G4 | Kullanıcı yalnızca tanımlı yetkileriyle işlem yapar | `yetkisiz modüllerde API isteği 403 döner` · tarayıcı: `Yetkisiz API isteği sunucuda engellenir` |
 
-**Ağırlık formülü (genel giderler):**
+> **Güvenlik notu:** Hatalı kullanıcı adı ile hatalı şifre **aynı** mesajı döndürür;
+> böylece hangi kullanıcıların var olduğu sızdırılmaz.
+
+---
+
+## 2. Veri ve Rapor Yönetimi
+
+### 2.1. Excel İçe / Dışa Aktarım ✅
+
+*Uygulama: `server/excel.js` (bağımlılıksız XLSX okuma/yazma), `src/ui/excelView.js`.*
+
+* Excel dosyasından toplu veri aktarımı yapılır (gelir ve gider).
+* Sistemdeki kayıtlar Excel formatında dışa aktarılır; sayfalar: Gelirler, Giderler,
+  Çalışanlar, Ekstra Çalışan, Toptancı Cari, Kasa. **Yetkisi olmayan sayfa dosyaya eklenmez.**
+* Yükleme ekranında **"❓ Yardım / Örnek Şablon"** düğmesi bulunur; sistemin kabul ettiği
+  sütun yapısını içeren örnek `.xlsx` şablonu indirir (ayrıca açıklama sayfası ekler).
+* Hatalı/eksik sütun yapısında kullanıcı bilgilendirilir: beklenen ve bulunan sütunlar listelenir.
+* Geçersiz satırlar **satır numarası ve gerekçesiyle** listelenir; geçerli satırlar aktarılır.
+* **Ön kontrol (dryRun)** seçeneği: kayıt eklemeden yalnızca doğrulama yapar.
+* Türkçe biçimler tanınır: `12.500,75` ve `12500.75`, `01.10.2026` ve `2026-10-01`,
+  Excel tarih seri numarası.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| E1 | Örnek şablon indirilebilir | `örnek şablon indirilebilir ve beklenen sütunları içerir` · tarayıcı: `Örnek Excel şablonu "?" düğmesinden indirilir` |
+| E2 | Şablona uygun veriler aktarılır | `şablona uygun Excel içe aktarılır, geçersiz satırlar bildirilir` |
+| E3 | Geçersiz satırlar bildirilir | aynı test (satır 4 hatalı olarak raporlanır) |
+| E4 | Hatalı sütun yapısı bildirilir | `sütun yapısı uymayan dosya açıklayıcı hata verir` |
+| E5 | Veriler Excel olarak dışa aktarılır | `dışa aktarım yetkiye göre sayfa üretir` · tarayıcı: `Dönem verisi Excel olarak dışa aktarılır` |
+| E6 | Ön kontrol kayıt eklemez | `ön kontrol (dryRun) kayıt eklemez` |
+
+### 2.2. Dinamik Yazdırma Seçenekleri ✅
+
+*Uygulama: `src/ui/printDialog.js`.*
+
+* Yazdırılabilir raporlarda üst şeritte **🖨️** düğmesi bulunur (yetki: `yazdirma`).
+* Düğmeye basıldığında seçim modalı açılır; içerikler checkbox ile seçilir:
+  Özet Göstergeler · Grafikler · Gelirler · Giderler · KDV ve Vergiler · Kasa Durumu ·
+  Oda Bazlı Tablolar · Diğer Tablolar.
+* "Tümünü Seç" / "Tümünü Kaldır" kısayolları vardır.
+* Seçilmeyen bölümler yazdırma çıktısında görünmez; yazdırma bitince sayfa eski hâline döner.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| Y1 | Yazdırma öncesi seçim ekranı açılır | tarayıcı: `Yazdırma seçim ekranı açılır ve içerik seçilebilir` |
+| Y2 | Kullanıcı istediği bölümleri seçebilir | aynı test (tümünü kaldırma doğrulanır) |
+| Y3 | Çıktıda yalnızca seçilenler bulunur | `print-hidden` sınıfı `@media print` ile gizlenir |
+
+---
+
+## 3. Gider Yönetimi
+
+### 3.1. Giderler Ana Menüsü ✅
+
+Menüde ayrı sayfalar: **Genel Harcamalar · Çalışanlar · Ekstra Çalışan · Vergiler**.
+Her sayfanın kendi veri giriş ekranı ve tablosu vardır.
+
+### 3.2. Çalışanlar (Sabit Personel) ✅
+
+*Uygulama: `src/ui/employeesView.js`, `src/core/finance.js`.*
+
+* Girilen bilgiler: personel adı, görev, **net maaş**, **SGK/sigorta**, dönem (ay), not.
+* Maaş ve SGK **ayrı ayrı** tutulur; toplamı ilgili ayın giderine dahil edilir.
+* Aynı personel aynı dönemde iki kez kaydedilemez.
+* "Önceki Aydan Kopyala" ile tekrarlayan personel yeni döneme taşınır.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| C1 | Yeni personel eklenebilir | `personel maaş ve SGK ayrı tutulur…` · tarayıcı: `Personel maaş ve SGK ayrı girilir…` |
+| C2 | Maaş ve SGK ayrı girilir | aynı testler |
+| C3 | Ayın gider toplamı otomatik güncellenir | tarayıcı adımı dönem personel giderini doğrular |
+| C4 | Mükerrer kayıt engellenir | `aynı personel aynı dönemde iki kez kaydedilemez` |
+
+### 3.3. Ekstra Çalışan ✅
+
+* Girilen bilgiler: çalışan adı/açıklama, çalışma tarihi, yevmiye/ödeme tutarı, açıklama.
+* Ödeme **yalnızca girildiği döneme** yansır; başka aya taşınmaz.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| K1 | Ödeme manuel girilebilir | `ekstra çalışan ödemesi tarih ve tutar ister` |
+| K2 | Tutar ilgili ayın giderine eklenir | tarayıcı: `Ekstra çalışan ödemesi döneme yansır` |
+
+### 3.4. Genel Harcamalar ✅
+
+* "＋ Yeni Gider" ve sağ alt köşedeki hızlı ekle (FAB) düğmesi.
+* Alanlar: tarih, tutar, para birimi, kategori, açıklama, tedarikçi, dağıtım yöntemi,
+  oda/demirbaş, dekont eki, tekrarlama.
+* Kaydedilen harcama ilgili ayın gider toplamına anında dahil olur.
+
+### 3.5. Dönemsel Gider Yönetimi ✅
+
+* **Tek seferlik giderler** yalnızca girildiği ayda görünür.
+* **Tekrarlayan giderler** "Her ayın X günü" olarak işaretlenir; rapor üretilirken o döneme
+  otomatik yansır. Bitiş tarihi verilirse sonrasında oluşmaz; pasife alınırsa hiç işlenmez.
+* **Faturalar:** Ayarlar → *Dönemsel Fatura Kalemleri*'nde tanımlı elektrik/su/doğalgaz gibi
+  kalemler, yeni dönem açıldığında **0 TL** olarak otomatik oluşturulur; fatura gelince tutar
+  güncellenir ve ilgili ayın giderine dahil olur. Aynı dönem için ikinci kez oluşturulmaz.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| D1 | Tekrarlayan gider her ay yansır | `tekrarlayan gider her ayın belirtilen gününde yansır` |
+| D2 | Başlangıç/bitiş sınırlarına uyar | `tekrarlayan gider başlangıç tarihinden önce ve bitişten sonra yansımaz` |
+| D3 | Yeni dönemde fatura 0 TL açılır, mükerrer açılmaz | `dönemsel faturalar yeni ayda 0 TL olarak açılır ve tekrar açılmaz` |
+| D4 | Pasif gider hesaptan düşer, silinmez | `pasif gider hesaplamadan düşer, kayıt silinmez` · tarayıcı: `Gider aktif/pasif anahtarı…` |
+
+---
+
+## 4. Restoran ve Toptancı Yönetimi
+
+### 4.1 / 4.2. Toptancılar ve Cari Panel ✅
+
+*Uygulama: `src/ui/suppliersView.js`, `finance.supplierBalance()`.*
+
+* Yeni toptancı eklenir; mevcut toptancı **pasife alınabilir** veya silinebilir
+  (silme, bağlı cari hareketleri de kaldırır).
+* Her toptancının bağımsız **cari paneli** vardır: kesilen faturalar, yapılan ödemeler,
+  toplam borç, **yürüyen bakiye**, işlem tarihleri ve fatura numaraları.
+* **Fatura borcu artırır, ödeme azaltır.** Fatura kaydında fatura numarası zorunludur;
+  KDV oranı girilir ve vergi raporunda indirilecek KDV olarak kullanılır.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| T1 | Toptancı bazında cari görüntülenir | tarayıcı: `Toptancı eklenir ve cari paneli açılır` |
+| T2 | Fatura borcu artırır | `fatura borcu artırır, ödeme azaltır; bakiye yürüyen olarak hesaplanır` |
+| T3 | Ödeme borcu azaltır | aynı test · tarayıcı: `Fatura borcu artırır, ödeme azaltır` |
+| T4 | Kalan bakiye net gösterilir | aynı testler (12.000 − 5.000 = 7.000) |
+
+### 4.3. Toptancı Arama ve Filtreleme ✅
+
+Toptancı adı, fatura numarası ve tarih aralığı ile filtreleme; "Filtreleri Temizle" kısayolu.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| T5 | Tarih aralığı filtrelenir | `cari hesap tarih aralığına göre filtrelenir` |
+| T6 | Toptancı adına göre filtrelenir | tarayıcı: `Toptancı adına göre arama çalışır` |
+| T7 | Fatura numarasına göre aranır | arayüzde fatura no araması (`filters.invoiceNo`) |
+
+---
+
+## 5. Vergi ve Kasa Yönetimi
+
+### 5.1. Vergi Raporu ✅
+
+*Konum: Giderler → Vergiler. Uygulama: `src/ui/taxView.js`, `finance.taxReport()`.*
+
+**KDV hesabı** — tutarlar KDV dahil kabul edilir, iç yüzde ile ayrıştırılır:
 
 ```
-ağırlık(oda, tür) = yöntemAğırlığı(oda, tür) × ( sabitPay + (1 − sabitPay) × dolulukOranı )
-
-yöntemAğırlığı =  A → 1
-                  B → oda m²
-                  C → maliyetÇarpanı × (1 + Σ demirbaş katsayıları[tür])
-
-odaPayı = tutar × ağırlık(oda) / Σ ağırlık(tüm odalar)
+Hesaplanan KDV   = konaklama geliri × oran / (100 + oran)
+İndirilecek KDV  = belgeli gider × oran / (100 + oran)
+Ödenecek Net KDV = Hesaplanan − İndirilecek      (negatifse "devreden KDV")
 ```
 
-* `sabitPay` (varsayılan **0,25**) boş odaların da üstlendiği payı temsil eder.
-* **Pasif** odalar dağıtıma girmez; hiçbir ağırlık üretilemezse gider satıştaki odalara
-  eşit paylaştırılır.
-* Dağıtım kuruş hassasiyetindedir; yuvarlama artıkları en büyük kesirli paya eklenir —
-  **parçaların toplamı her zaman dağıtılan tutara eşittir** (`splitByWeights`).
+Rapor ayrı satırlar hâlinde şunları gösterir: **KDV · Konaklama Vergisi · Turizm Payı ·
+Net Kâr · Net Kâr üzerinden Gelir/Kurumlar Vergisi · Vergi Sonrası Net Kâr.**
 
-**Sonuç çıktısı:** "Oda 1 bu ay ne kadar brüt gelir getirdi, ne kadar genel/spesifik
-masraf çıkardı, net kârı nedir?" sorusunun oda bazlı net cevabı (Dashboard tablosu).
+* Konaklama vergisi ve turizm payı **KDV hariç** gelir üzerinden hesaplanır.
+* Personel ödemeleri KDV doğurmadığı için indirilecek KDV matrahına dahil edilmez.
+* Rapor dönem bazında görüntülenir (üst şeritteki dönem seçicisi).
+* **Vergi oranları sabit kodlanmamıştır**; Ayarlar yetkisi olan kullanıcı rapor ekranından
+  günceller (varsayılanlar: KDV %10/%20, konaklama vergisi %2, turizm payı %0,75, gelir vergisi %25).
 
-### 2.2. Kategorize Edilmiş Gider Yapısı ✅
+| # | Kriter | Test |
+| --- | --- | --- |
+| V1 | Hesaplar kayıtlı verilerden otomatik yapılır | `ödenecek net KDV = hesaplanan − indirilecek` |
+| V2 | Vergi kalemleri ayrı gösterilir | tarayıcı: `Vergi raporu KDV, konaklama vergisi ve turizm payını ayrı gösterir` |
+| V3 | Rapor dönem bazlıdır | dönem seçicisi raporu yeniden üretir |
+| V4 | Oranlar değiştirilebilir | `vergi oranları değiştirilebilir ve doğrulanır` · tarayıcı: `Vergi oranları değiştirilebilir ve rapora yansır` |
+| V5 | Devreden KDV ayrıca gösterilir | `indirilecek KDV fazlaysa devreden KDV oluşur` |
 
-Her kategori bir ana gruba bağlıdır; raporlama ve filtreleme bu gruplar üzerinden yapılır:
+### 5.2. Gün Sonu ve Kasa Açığı ✅
 
-| Grup | Kapsam |
+*Uygulama: `src/ui/cashView.js`, `finance.cashSummary()`.*
+
+```
+Beklenen Kasa = Gün Başı Devir + Günlük Gelir − Günlük Gider
+Fark          = Fiili (sayılan) Kasa − Beklenen Kasa
+```
+
+* Günlük gelir: o gece konaklayan rezervasyonların gecelik payı.
+* Günlük gider: o tarihli giderler (tekrarlayanlar dâhil) + ekstra çalışan ödemeleri +
+  toptancılara yapılan ödemeler.
+* Sonuç net olarak gösterilir: **Kasa Açığı · Kasa Fazlası · Denk / Fark Yok**.
+* Aylık toplam fark ve açık/fazla veren gün sayısı raporlanır.
+* Aynı güne ikinci gün sonu kaydı engellenir.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| S1 | Gün sonu işlemi yapılabilir | tarayıcı: `Gün sonu: kasa açığı tespit edilir` |
+| S2 | Kayıtlı ve fiili kasa karşılaştırılır | `kasa denk olduğunda fark yok bildirilir` |
+| S3 | Fark açık şekilde gösterilir | `sayılan kasa eksikse kasa açığı bildirilir`, `…fazlaysa kasa fazlası bildirilir` |
+| S4 | Aylık toplam fark raporlanır | Kasa ekranındaki "Aylık Toplam Fark" göstergesi |
+| S5 | Mükerrer gün sonu engellenir | `aynı güne ikinci gün sonu kaydı reddedilir` |
+
+---
+
+## 6. Kullanıcı ve Yetki Yönetimi
+
+### 6.1. Admin Arayüzü ✅
+
+Yalnızca Admin: kullanıcı oluşturur, bilgilerini düzenler, aktif/pasif yapar, şifresini
+değiştirir ve erişebileceği modülleri belirler. Her kullanıcı kendi şifresini değiştirebilir.
+
+### 6.2. Rol ve Modül Bazlı Yetkilendirme ✅
+
+18 modül aç/kapa anahtarıyla yönetilir: Dashboard · Gelirler · Fiyat Girişi · Oda Ayarları ·
+Giderler · Çalışanlar · Ekstra Çalışan · Genel Harcamalar · Vergiler · Restoran · Toptancılar ·
+Kasa · Finansal Raporlar · Excel İçe Aktarım · Excel Dışa Aktarım · Yazdırma · Ayarlar ·
+Kullanıcı Yönetimi.
+
+**İş kuralları**
+
+* Yetkisi kapalı kullanıcı ilgili modülü görmez (menüde yer almaz).
+* Yetkisi olmayan kullanıcı ilgili sayfaya adresten de erişemez; API isteği 403 döner.
+* Kullanıcı yönetimi yalnızca Admin tarafından yapılır.
+* **Sistemde en az bir aktif Admin kalmalıdır** (son admin pasife alınamaz/silinemez).
+* Pasife alınan kullanıcının açık oturumları anında düşer.
+* Yetkisi olmayan kullanıcıya kişisel/firma bilgileri **maskelenerek** döner
+  (`•••`); tutarlar korunur, böylece toplamlar şaşmaz.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| A1 | Yetkisiz modül görünmez | tarayıcı: `Sınırlı kullanıcı yalnızca yetkili modülleri görür` |
+| A2 | Yetkisiz URL'ye erişilemez | tarayıcı: `Yetkisiz sayfaya adresten gidilemez` |
+| A3 | Kullanıcı yönetimi yalnızca Admin'de | `kullanıcı yönetimi yalnızca Admin tarafından yapılabilir` |
+| A4 | Son admin korunur | `sistemde en az bir aktif Admin kalmalıdır` |
+| A5 | Pasif kullanıcı giriş yapamaz | `pasif kullanıcı giriş yapamaz` |
+| A6 | Kişisel veriler maskelenir | `yetkisiz kullanıcıya kişisel veriler maskelenerek döner` |
+
+---
+
+## 7. Varsayılan Admin Kullanıcısı ✅
+
+Kurulumda (veritabanı boşken) başlangıç hesabı oluşturulur ve sunucu açılışında ekrana yazılır:
+
+| Alan | Değer |
 | --- | --- |
-| **Sabit Giderler** | Kira, maaşlar, muhasebe, sigorta, internet/yazılım aboneliği |
-| **Değişken Giderler** | Elektrik, su, doğalgaz, çamaşırhane |
-| **Operasyonel / Oda Giderleri** | Buklet, temizlik ürünleri, bakım-onarım, demirbaş, zayi |
-| **Pazarlama & Komisyon** | Acenta (Booking, Airbnb) komisyonları, reklam |
+| Kullanıcı Adı | `Admin` |
+| Şifre | `Admin2026` |
 
-Acenta komisyonu ayrıca rezervasyon bazında oran olarak girilir ve **net gelirden düşülür**.
-
-### 2.3. Tekrarlayan Giderler (Abonelikler) Modülü ✅
-
-İnternet, yazılım abonelikleri, kira veya personel maaşları "her ayın X gününde gider
-tabloma otomatik yansıt" şeklinde işaretlenir. Motor, dönem raporunu üretirken bu
-kalemleri o döneme ait gerçek gider kalemleri olarak üretir (`expandExpenses`);
-başlangıç tarihinden önce ve bitiş tarihinden sonra yansımaz. Gider satırındaki 🔁
-ikonu tekil bir gideri tekrarlayana çevirir.
-
-### 2.4. Otomatik Kur Entegrasyonu (TCMB veya Canlı API) ✅ / 🔜
-
-*Uygulama: `src/core/fx.js`.*
-
-* Tutarlar **girildikleri para biriminde** saklanır; rapor anında TL'ye çevrilir.
-* Kur **tarih bazlı geçmişle** tutulur (`fx.history`): geçmiş bir dönem raporlanırken o
-  tarihe ait (veya en yakın önceki) kur kullanılır — gerçek kâr/zarar korunur.
-* Kur kaynağı: `TCMB Efektif Satış`, `TCMB Döviz Alış` veya `Sabit Kur (manuel)`.
-  Ayarlardaki **"TCMB'den Kuru Çek"** butonu `today.xml` servisini okur.
-* 🔜 **Bilinen sınır:** TCMB servisi tarayıcıya CORS başlığı göndermez; doğrudan çekim
-  engellenirse sistem sessizce **manuel kura** düşer ve kullanıcıyı bilgilendirir.
-  Kesintisiz otomatik kur için sunucu tarafı proxy Faz 2 kapsamındadır.
+**Güvenlik kuralı uygulanmıştır:** İlk girişten sonra şifre değiştirme **zorunludur** —
+değiştirilene kadar uygulamaya geçilemez. Şifre politikası: en az 6 karakter, en az bir
+harf ve bir rakam.
 
 ---
 
-## 3. Gelişmiş Finansal Metrikler ve Dashboard ✅
+## 8. Genel Sistem Kuralları ✅
 
-*Uygulama: `src/ui/dashboardView.js`, `src/ui/charts.js`.*
-
-### 3.1. Temel Kârlılık ve Gelir Göstergeleri
-
-| Gösterge | Tanım |
+| Kural | Uygulama |
 | --- | --- |
-| **Aylık Kâr/Zarar** | Gelir − dağıtılan gider − işletme geneli gider; marj yüzdesiyle |
-| **ADR** | Ortalama günlük satılan oda fiyatı = gelir / satılan oda-gecesi |
-| **RevPAR** | Toplam envanter üzerinden oda başı gerçek gelir = gelir / satılabilir oda-gecesi |
-| **Doluluk** | Satılan oda-gecesi / satılabilir oda-gecesi |
-| **Kişi Başı Maliyet** | Dağıtılan gider / kişi-gece |
-
-**Gider Dağılım Grafiği (pasta/halka):** Toplam masrafın gruplara dağılımı. Grafik,
-erişilebilirlik gereği renk-tek-başına bilgi taşımaz: her dilim açıklama listesinde
-tutar ve yüzdeyle etiketlenir, altında kategori kırılım tablosu bulunur. Palet
-körlük (CVD) ayrımı, kontrast ve açıklık bantları için doğrulanmıştır.
-
-### 3.2. İleri Düzey Finansal Analizler
-
-* **Başa Baş Noktası (Break-Even) Hesaplayıcı:**
-  ```
-  katkıPayı/gece   = ADR − (değişken+operasyonel+pazarlama giderleri / satılan gece)
-  gerekenGece      = sabit giderler / katkıPayı
-  gerekenDoluluk   = gerekenGece / satılabilir oda-gecesi
-  gerekenMin. ADR  = (sabit + değişken giderler) / satılan gece
-  ```
-* **Yıllık Karşılaştırma (YOY):** Seçilen dönem, bir önceki yılın aynı dönemiyle gelir,
-  gider, net kâr, doluluk, ADR ve RevPAR bazında karşılaştırılır; değişim yön oku ve
-  yüzdeyle gösterilir.
-* **Zayi (Fire) ve Amortisman Takibi:** `Zayi / Amortisman` kategorisi kırılan bardak,
-  lekelenen havlu, arızalanan eşya gibi kalemleri maliyet olarak işler; hem odaya yazılır
-  hem de raporda ayrı toplanır.
-
-
-### 3.3. Oda Bazlı Fiyat Tavsiyesi ve Alt Limit ✅
-
-*Uygulama: `costEngine.roomPricing()`, `priceVerdict()`; arayüz: Dashboard tablosu,
-takvim hücreleri, fiyat giriş kutusu ve rezervasyon formu.*
-
-Maliyetler satışa bağlılıklarına göre ikiye ayrılır:
-
-* **Değişken** — kişi başı sarfiyat (kahvaltı, su, buklet) + genel giderlerin doluluğa
-  bağlı kısmı. *Bir gece daha satıldığında* ortaya çıkan maliyettir.
-* **Sabit** — doğrudan giderler (bakım/onarım), eşit dağıtılan kalemler (kira, maaş) ve
-  genel giderlerin sabit payı. Oda boş dursa da oluşur.
-
-Her oda için üç eşik üretilir:
-
-| Eşik | Formül | Anlamı |
-| --- | --- | --- |
-| **Alt limit** | değişken maliyet / satılan gece | Altındaki her satış doğrudan zarardır |
-| **Başa baş** | alt limit + sabit maliyet / (planlanan doluluk × gün) | Tüm maliyeti karşılar |
-| **Tavsiye** | başa baş / (1 − hedef marj) | Hedef kâr marjını tutturur |
-
-Ayrıca **gecelik gerçekleşen maliyet** = odanın toplam gideri / satılan gece sayısı
-("bu odanın bana gecelik maliyeti").
-
-**Uyarı noktaları** — fiyat dört durumdan birine düşer ve dört ekranda birden gösterilir:
-
-| Durum | Gösterim |
-| --- | --- |
-| `loss` | ⛔ ZARAR — alt limitin altında |
-| `below` | ⚠️ Başa baş fiyatın altında |
-| `under-target` | ⚑ Hedef kâr marjının altında |
-| `ok` | ✔ Hedefe uygun |
-
-1. **Fiyat giriş kutusu:** tutar yazılırken canlı karar + üç eşik; "Başa başa ayarla" ve
-   "Tavsiyeye ayarla" düğmeleri (eşiğin altına düşmemek için yukarı yuvarlar).
-2. **Takvim:** alt limitin altındaki günler ⚠, başa başın altındakiler `!` işaretiyle
-   ve ayrı renkle işaretlenir; açıklama şeridi anlamları yazar.
-3. **Rezervasyon formu:** gecelik **net** fiyat (komisyon düşülmüş) eşiklerle karşılaştırılır.
-4. **Dashboard:** oda bazlı tablo — gecelik maliyet, alt limit, başa baş, tavsiye,
-   komisyonlu kanal için brüt tavsiye (`tavsiye / (1 − komisyon)`), gerçekleşen ADR ve
-   takvimde kaç günün zararda olduğu.
-
-Planlanan doluluk varsayımı **Ayarlar → Finansal Hedef ve Kur** altından değiştirilir
-(varsayılan %60); düşük varsayım daha yüksek tavsiye fiyatı üretir.
+| Tüm finansal kayıtlar tarih/dönem bazında tutulur | Her kayıtta `date` veya `period` alanı |
+| Aylık raporlar bağımsız görüntülenir | Üst şeritte dönem seçici ve hızlı aralıklar |
+| Kayıt değişince hesaplar otomatik güncellenir | Değişiklik sonrası durum sunucudan tazelenir |
+| Kritik kayıtlarda silme yerine pasife alma | Gider, personel, toptancı, cari hareket ve kullanıcıda aktif/pasif |
+| Yetkisiz işlemler arayüz **ve** API'de engellenir | Menü filtresi + her uçta modül kontrolü |
+| Kritik değişiklikler kullanıcı ve tarihle kaydedilir | `server/audit.js`; Kullanıcı Yönetimi ekranında görüntülenir |
+| Raporlarda tarih aralığı seçilebilir | Bu Ay · Geçen Ay · Bu Çeyrek · YTD · Geçen Yılın Aynı Ayı · Özel Aralık |
+| Parasal değerler TL cinsinden tutulur ve gösterilir | Baz para birimi TRY; EUR kalemler tarihine ait kurla çevrilir |
+| Vergi oranları yönetilebilir parametredir | Ayarlar/Vergi Raporu ekranından düzenlenir |
 
 ---
 
-## 4. UI / UX Mimarisi ✅
-
-* **Sol Menü (Sidebar):** Dashboard · Fiyat/Gelir Takvimi · Gider Yönetimi ·
-  Rezervasyonlar · Oda Ayarları · Finansal Raporlar · Sistem Ayarları.
-* **Üst Şerit:** ay gezinme (‹ ›), hızlı tarih filtreleri, özel aralık seçici, güncel kur
-  ve `[₺ TRY] / [€ EUR]` anahtarı.
-* **Hızlı Ekle (FAB):** Sağ alt köşede sabit `+` butonu; üzerine gelindiğinde
-  `[+ Gider Ekle]` ve `[+ Hızlı Fiyat Gir]`.
-* **Renk Kodlaması:** Takvimde fiyat girilmemiş günler kırmızı, girilenler yeşil.
-  Dashboard'da gerçekleşen marj hedefin altındaysa kırmızı, üstündeyse yeşil (§8.2).
-* Arayüz ön büro karmaşasından uzak, yalnızca finansal veriye odaklıdır.
-
----
-
-## 5. Teknik Altyapı ve Gelecek Fazlar
-
-* **Mevcut mimari:** Bağımlılıksız ES modülleri; saf hesap katmanı (`src/core/`) tarayıcı
-  ve Node testleri tarafından aynen kullanılır. Kalıcılık tarayıcıda `localStorage`
-  (`gelir-gider:v1`), yedekleme JSON dışa/içe aktarımıyla yapılır.
-* 🔜 **Veritabanı Yapısı:** Odalar, Gelirler (fiyat takvimi + rezervasyon), Giderler ve
-  Kategoriler tabloları finansal tutarlılık (ACID) gözetilerek ilişkisel veritabanına
-  taşınacaktır. Mevcut veri modeli bu geçişe hazır normalize edilmiştir.
-* 🔜 **Faz 2 — Kanal Yöneticisi Entegrasyonu:** Booking/Airbnb'den kesin gelir ve kesilen
-  komisyonun otomatik yansıması için API altyapısı (komisyon oranı alanı şimdiden mevcut).
-* ✅/🔜 **Faz 3 — Muhasebe Dışa Aktarımı:** Veriler tek tıkla **Excel**, **CSV** ve
-  **PDF** (yazdır → PDF) olarak dışa aktarılabilir; doğrudan mali müşavir entegrasyonu
-  Faz 3'tedir.
-
----
-
-## 6. Fonksiyon Tuşları (Action Buttons & Controls) ✅
-
-### 6.1. Genel / Ortak
-* **Döviz Görünüm Modu:** Sağ üstte sabit `[₺ TRY] / [€ EUR]` anahtarı; tüm dashboard,
-  gelir ve gider tabloları anında dönüşür.
-* **Hızlı Ekle Floating Butonu (FAB):** Sağ alt köşe; `[+ Gider Ekle]`, `[+ Hızlı Fiyat Gir]`.
-* **Dışa Aktar:** Raporlar sayfasında `[PDF İndir]` `[Excel'e Aktar]` `[CSV Kaydet]`.
-
-### 6.2. Takvim ve Fiyatlandırma
-* **Toplu Güncelle:** Tarih aralığı + hafta içi/hafta sonu fiyat kutucukları + `[Uygula]`.
-* **Fiyatları Kopyala:** `[Geçen Haftayı Kopyala]` / `[Geçen Ayı Kopyala]`.
-* **Boş Günleri Vurgula:** Eksik günleri kırmızı çerçeveyle işaretler.
-
-### 6.3. Gider Yönetimi
-* **Aktif/Pasif Anahtarı:** Her satırın solunda; yeşil (aktif) → gri (pasif).
-* **Dekont/Fiş Ekle:** 📎 ikonu; PDF/JPEG yükler (maks. 3 MB), satırdan indirilebilir.
-* **Tekrarla (Make Recurring):** 🔁 ikonu; "her ayın X gününde" otomatik yansıtma.
-
----
-
-## 7. Dinamik Filtreleme Seçenekleri ✅
-
-### 7.1. Zaman ve Tarih
-`[Bu Ay]` `[Geçen Ay]` `[Bu Çeyrek]` `[YTD]` `[Geçen Yılın Aynı Ayı]` hızlı butonları,
-ay ileri/geri gezinme ve **Özel Tarih Aralığı** (ör. yalnızca bayram haftası).
-
-### 7.2. Gider ve Maliyet
-Ana gruplara göre çoklu seçim filtreleri (Sabit / Değişken / Operasyonel / Pazarlama),
-açıklama-tedarikçi araması, "sadece tekrarlayanlar" ve "pasifleri göster" anahtarları.
-
----
-
-## 8. Sistem ve Modül Ayarları ✅
-
-Tek kullanıcılı, rolsüz yapıya göre optimize edilmiştir. *Uygulama: `src/ui/settingsView.js`.*
-
-### 8.1. Maliyet Dağıtım Algoritması Ayarları
-
-| Seçenek | Tanım |
-| --- | --- |
-| **A · Eşit** | Toplam genel gider / oda sayısı |
-| **B · Metrekare Bazlı** | Odaların m² büyüklükleri oranında ağırlıklı dağıtım |
-| **C · Özel Katsayı** | Odaya atanan maliyet çarpanı × demirbaş katsayıları (varsayılan) |
-
-Ek parametre: **boş odaların sabit pay oranı** (0 = gider yalnızca dolu odalara yansır,
-1 = doluluk dikkate alınmaz).
-
-### 8.2. Finansal Hedef ve Alarm Ayarları
-
-* **Minimum Kârlılık Hedefi:** Aylık hedeflenen net kâr marjı (varsayılan %35).
-  Dashboard'da gerçekleşen marj hedefin altındaysa kırmızı, üstündeyse yeşil vurgulanır.
-* **Kur Çekim Ayarı:** `TCMB Efektif Satış` / `TCMB Döviz Alış` / `Sabit Kur Gir`.
-* **Görüntüleme Para Birimi:** Raporların varsayılan para birimi.
-* **Planlanan Doluluk:** Fiyat tavsiyesinde sabit giderlerin yayıldığı doluluk varsayımı
-  (varsayılan %60, bkz. §3.3).
-
-### 8.3. Kategori ve Oda Ayarları
-
-* **Kategori Yöneticisi:** Varsayılan kategorilere ek alt kategoriler yaratma, renk kodu
-  atama, arşivleme ve silme.
-* **Oda Profili Yönetimi:** 9 odanın isim/numara, durum ve maliyete etki eden
-  özellik/demirbaşlarının yönetimi → ayrıntılı tanım **§8.4**.
-
----
-
-### 8.4. Gelişmiş Oda Profili ve Envanter Kartları (Kişi Bazlı Maliyet Altyapısı) ✅
-
-Sistemin kârlılığı, oda spesifik masrafları ve kişi bazlı sarfiyatları doğru
-hesaplayabilmesi için her odanın detaylı bir **"Oda Kartı"** mantığıyla yönetildiği
-yapılandırma modülüdür. Odalar ızgarasında bir odaya tıklandığında açılan panelde
-aşağıdaki parametreler yapılandırılır.
-
-> **Uygulama:** `src/ui/roomCard.js` (arayüz), `src/core/model.js` (kural ve doğrulama),
-> `src/core/catalog.js` (yatak ve demirbaş katalogları).
-
-#### 8.4.1 Oda İsimlendirme ve Tanımlama
-
-* Odalara özel **numara** ve **konsept ismi** atanabilir (Örn: `101 - King Suite`,
-  `102 - Bahçe Manzaralı Standart`).
-* Ek alanlar: kat, durum (Satışta / Bakımda / Pasif), gecelik liste fiyatı,
-  **oda büyüklüğü (m²)** — Seçenek B için —, **maliyet çarpanı** — Seçenek C için — ve not.
-* Oda numarası zorunludur ve tekrar edemez. Etiketleme: `numara - konsept ismi`.
-
-#### 8.4.2 Kapasite ve Yatak Yapılandırması
-
-* Odadaki **yatak tipi ve sayısı** satır satır eklenir (Örn: `1 × Çift Kişilik`,
-  `1 × Tek Kişilik`). Katalog: Çift Kişilik (2), Tek Kişilik (1), Ranza (2), Çekyat (2),
-  İlave Yatak (1), Bebek Karyolası (0 — kapasiteye sayılmaz).
-* **Yatak kapasitesi** otomatik hesaplanır: `Σ (yatak adedi × yatağın kişi sayısı)`.
-* **Maksimum konaklayabilecek kişi sayısı** açılır menüden seçilir. Menü yalnızca
-  `1 … yatak kapasitesi` aralığını sunar; kapasite üstü değer seçilemez ve kaydedilemez.
-
-**Finansal etkisi**
-
-* Rezervasyon girilirken **"Konaklayan Kişi Sayısı"** bu kapasiteyi aşamaz. Rezervasyon
-  formundaki menü odanın `maxOccupancy` değerine göre kurulur; kural ayrıca kayıt anında
-  doğrulanır (arayüz atlatılsa bile veri katmanı reddeder).
-* Girilen net kişi sayısı **Kişi Başı Maliyet (Cost Per Guest)** algoritmasını tetikler:
-  o rezervasyonun her gecesi için kahvaltı, su ve diğer sarf malzemesi giderleri
-  `kişi × gece` tabanında hesaplanıp **ilgili odaya** yazılır.
-
-**Kişi başı sarfiyat tarifesi** (Ayarlar → hesap tabanları):
-
-| Hesap tabanı | Birim | Tipik kalem |
-| --- | --- | --- |
-| `guestNight` | kişi × dönem içi gece | Kahvaltı, su, buklet |
-| `guestStay` | kişi × konaklama | Nevresim seti |
-| `stay` | konaklama başına | Çıkış temizliği |
-
-`requiresBreakfast` işaretli kalemler yalnızca "kahvaltı dahil" rezervasyonlarda işler.
-
-#### 8.4.3 Demirbaş ve Özellik Listesi (Check-box Modülü)
-
-* Odadaki cihaz ve donanımlar **çoklu seçim (checkbox)** ile işaretlenir; liste
-  gruplandırılmıştır: *Isıtma & Soğutma*, *Islak Hacim*, *Mutfak & Minibar*,
-  *Elektronik*, *Konfor & Manzara*.
-* **Arayüz beklentisi:** 101'e tıklandığında açılan panelde donanımlar işaretlenir —
-  `[x] Jakuzi`, `[x] Şömine`, `[x] Klima`, `[ ] Minibar`, `[x] Smart TV`,
-  `[x] Espresso Makinesi` … Her satırın sağında tüketim katsayısı rozet olarak görünür
-  (`⚡ +%45`, `💧 +%60`, `🔥 +%15`).
-
-**Finansal etkisi — 1. Maliyet Çarpanı**
-
-Jakuzi, klima, sauna gibi yüksek tüketimli donanımlara sahip odalar genel elektrik/su/
-ısıtma giderlerinden daha yüksek pay alır:
+## 9. Ana Menü Yapısı ✅
 
 ```
-demirbaşYükü(oda, tür) = 1 + Σ seçili demirbaşların katsayısı[tür]
+GENEL      → Dashboard · Gelirler · Fiyat Girişi · Oda Ayarları
+GİDERLER   → Genel Harcamalar · Çalışanlar · Ekstra Çalışan · Vergiler
+RESTORAN   → Toptancılar
+KASA       → Gün Sonu / Kasa
+RAPORLAR   → Finansal Raporlar · Excel İşlemleri
+YÖNETİM    → Kullanıcı ve Yetki · Ayarlar
 ```
 
-Örnek: Jakuzi (+0,45) + Klima (+0,35) + Smart TV (+0,08) + Espresso (+0,10) seçili bir
-odanın elektrik yükü **×1,98**; demirbaşsız oda ×1,00 kalır. Bu yük, §8.1 Seçenek C'de
-odanın maliyet çarpanıyla çarpılarak dağıtım ağırlığını verir.
-
-**Finansal etkisi — 2. Direkt Gider Ataması**
-
-* Gider eklerken dağıtım `Doğrudan Odaya` seçildiğinde, oda seçiminin ardından demirbaş
-  listesi **yalnızca o odanın kartında işaretli, servis edilebilir donanımlarla** dolar.
-  "Jakuzi motor arızası" gideri böylece iki tıkla 101'e yazılır.
-* Oda kartının sağ sütunundaki **demirbaş çipleri** kısayoldur: çipe tıklamak, oda ve
-  demirbaş alanları önceden doldurulmuş bir gider formu açar.
-* Doğrulama: bir gider, o odanın kartında işaretli olmayan bir demirbaşa yazılamaz.
-
-#### 8.4.4 Canlı Maliyet Etkisi Paneli
-
-Oda kartının sağ sütununda seçimlerin sonucu kaydetmeden önce canlı gösterilir: aktif
-dağıtım yöntemi, gider türü başına ağırlık, maksimum kapasite, **tam dolulukta günlük
-kişi başı sarfiyat** ve gecelik liste fiyatı.
-
-#### 8.4.5 Kabul Kriterleri ve Test Eşlemesi
-
-| # | Kriter | Doğrulayan test |
-| --- | --- | --- |
-| K1 | Oda numara + konsept ismiyle etiketlenir | `oda kartı: numara ve konsept ismi birlikte etiketlenir` |
-| K2 | Yatak yapılandırması kapasiteyi üretir; bebek karyolası sayılmaz | `yatak yapılandırması kapasiteyi belirler`, `bebek karyolası kapasiteye sayılmaz` |
-| K3 | Maks. kişi sayısı yatak kapasitesini aşamaz | `maksimum kişi sayısı yatak kapasitesini aşamaz` |
-| K4 | Oda numarası tekrar edemez | `aynı oda numarası iki kez tanımlanamaz` |
-| K5 | Rezervasyon kişi sayısı kapasiteyi aşamaz | `rezervasyondaki kişi sayısı oda kapasitesini aşamaz`, `kapasiteyi aşan rezervasyon store seviyesinde reddedilir` |
-| K6 | Demirbaş katsayısı `1 + Σ` olarak hesaplanır | `demirbaş katsayısı: 1 + seçili demirbaşların yükü` |
-| K7 | Jakuzili oda genel giderden fazla pay alır | `Seçenek C — özel katsayı × demirbaş yükü` |
-| K8 | Doğrudan gider %100 ilgili odaya yazılır | `doğrudan gider tamamıyla ilgili odaya yazılır` |
-| K9 | Gider, odada olmayan demirbaşa yazılamaz | `doğrudan gider odada olmayan demirbaşa yazılamaz` |
-| K10 | Kişi başı sarfiyat kişi-gece oranına göre dağıtılır | `kişi başı gider, kişi-gece oranına göre paylaştırılır` |
-| K11 | Checkbox seçimi katsayıyı canlı günceller | Tarayıcı: `Demirbaş checkbox katsayıyı canlı günceller` |
-| K12 | Demirbaş çipi ön-doldurulmuş gider formu açar | Tarayıcı: `Oda kartından demirbaşa doğrudan gider yazılır` |
+Menü, Admin'in verdiği yetkilere göre **dinamik** olarak oluşturulur: yetkisi olmayan
+girdi hiç basılmaz.
 
 ---
 
-## 9. Sistem Geneli Kabul Kriterleri
-
-| # | Kriter | Doğrulayan test |
-| --- | --- | --- |
-| S1 | Pasif gider hesaptan düşer, kayıt silinmez | `pasif gider hesaplamadan düşer, kayıt silinmez` |
-| S2 | Dağıtım Seçenek A / B / C doğru çalışır | `Seçenek A — eşit dağıtım`, `Seçenek B — metrekare bazlı dağıtım`, `Seçenek C — özel katsayı × demirbaş yükü` |
-| S3 | Tekrarlayan gider her ay yansır, sınırlara uyar | `tekrarlayan gider her ayın belirtilen gününde yansır`, `…başlangıç tarihinden önce ve bitişten sonra yansımaz` |
-| S4 | EUR kalemler tarihine ait kurla çevrilir | `EUR gider, tarihine ait kurla TL'ye çevrilir`, `EUR rezervasyon geliri giriş tarihinin kuruyla hesaplanır` |
-| S5 | Acenta komisyonu net gelirden düşülür | `acenta komisyonu net gelirden düşülür` |
-| S6 | Takvim fiyatları projeksiyon ve eksik gün üretir | `takvim fiyatları beklenen geliri ve eksik gün sayısını üretir` |
-| S7 | Toplu güncelleme hafta içi/hafta sonu ayırır | `fiyat takvimi: toplu güncelleme hafta içi/hafta sonu ayrımı yapar` |
-| S8 | Kopyalama dolu günleri korur | `fiyat takvimi: kopyalama dolu günlerin üstüne yazmaz` |
-| S9 | ADR / RevPAR / doluluk envanter üzerinden hesaplanır | `ADR, RevPAR ve doluluk envanter üzerinden hesaplanır` |
-| S10 | Başa baş noktası doğru hesaplanır | `başa baş noktası sabit gideri katkı payına böler` |
-| S11 | Hedef marj karşılaştırması rapora işlenir | `hedef marj karşılaştırması rapora işlenir` |
-| S12 | YOY karşılaştırması oran üretir | `YOY karşılaştırması iki dönemin farkını oranlar` |
-| S13 | Zayi/amortisman ayrı raporlanır | `zayi/amortisman ayrı raporlanır ve odaya yazılır` |
-| S14 | Hızlı tarih filtreleri doğru dönem üretir | `hızlı tarih aralıkları doğru dönem üretir` |
-| S15 | Dağıtım toplamı gider toplamına eşittir | `dağıtılan tutarların toplamı dönem giderlerine eşittir`, `demo verisi 9 oda ile tutarlıdır ve rapor üretir` |
-| S16 | Dışa aktarım CSV/Excel dosyası üretir | Tarayıcı: `Raporlar sayfası CSV indirir`, `… Excel dosyası indirir` |
-| S17 | Alt limit = bir gece daha satmanın maliyeti | `alt limit, bir gece daha satmanın maliyetidir (kişi başı sarfiyat)` |
-| S18 | Başa baş fiyat sabit payı planlanan dolulukta dağıtır | `başa baş fiyat, sabit gider payını planlanan dolulukta dağıtır` |
-| S19 | Tavsiye fiyatı hedef marjı tutturur | `tavsiye fiyatı hedef marjı tutturur` |
-| S20 | Gecelik maliyetin altında satış zarar olarak bildirilir | `maliyeti 2.000 TL olan oda 1.900 TL’ye satılırsa zarar bildirilir` |
-| S21 | Düşük planlanan doluluk tavsiye fiyatını yükseltir | `düşük planlanan doluluk, tavsiye fiyatını yükseltir` |
-| S22 | Komisyonlu kanal için brüt fiyat hesaplanır | `komisyonlu kanalda aynı neti bırakan brüt fiyat hesaplanır` |
-| S23 | Zarar/başa baş altı fiyatlar takvimde işaretlenir | Tarayıcı: `Takvim: alt limitin altındaki fiyat ZARAR olarak uyarır` |
-| S24 | Serbest (yuvarlak olmayan) tutarlar kaydedilebilir | Tarayıcı: `Takvim: 50’nin katı olmayan fiyat da kaydedilebilir` |
-
----
-
-## 10. Veri Modeli ve Proje Yapısı
+## 10. Proje Yapısı
 
 ```
-index.html            → uygulama girişi (ESM, derleme adımı yok)
-src/core/             → tarayıcıdan ve Node testlerinden aynen kullanılan saf mantık
-  catalog.js          → yatak/demirbaş katalogları, gider kategori & grupları, dağıtım yöntemleri
-  model.js            → fabrikalar, kapasite/katsayı hesapları, doğrulama kuralları
-  costEngine.js       → dağıtım motoru, projeksiyon, ADR/RevPAR/başa baş/YOY
-  fx.js               → çift kur, tarih bazlı kur geçmişi, TCMB okuyucu
-  dates.js            → gece/dönem aritmetiği, hızlı tarih aralıkları
-  store.js            → localStorage tabanlı durum yönetimi (abonelikli)
-  seed.js             → 9 odalı demo veri seti
-src/ui/               → bağımlılıksız DOM görünümleri
-  roomCard.js         → §8.4 Oda Kartı paneli
-  calendarView.js     → §1.1 fiyat/gelir takvimi
-  dashboardView.js    → §3 yönetici özeti
-  expensesView.js     → §1.2 gider yönetimi
-  reportsView.js      → §5/§6.1 raporlar ve dışa aktarım
-  settingsView.js     → §8 ayarlar
-test/                 → node:test birim testleri + opsiyonel tarayıcı akış testi
+scripts/serve.js      → tek komutla statik dosya + API sunucusu
+server/
+  db.js               → dosya tabanlı depo, atomik yazma, sıralı güncelleme
+  auth.js             → PBKDF2 şifre saklama, oturum, varsayılan Admin
+  permissions.js      → 18 modül, yetki kontrolü
+  api.js              → kimlik, CRUD, fiyat, ayarlar, faturalar, kullanıcılar, Excel
+  excel.js            → bağımlılıksız XLSX okuma/yazma (node:zlib), şablonlar
+  audit.js            → denetim kaydı
+src/core/             → tarayıcı ve sunucunun paylaştığı saf mantık
+  finance.js          → personel, toptancı cari, kasa, vergi hesapları
+  costEngine.js       → maliyet dağıtımı, fiyat eşikleri (bkz. PRD-BI.md)
+  model.js · dates.js · fx.js · format.js · api.js · store.js
+src/ui/               → görünümler (login, dashboard, giderler, toptancılar, kasa,
+                        vergi, kullanıcılar, excel, yazdırma, takvim, oda kartı…)
+test/                 → birim ve API testleri + opsiyonel tarayıcı akışları
+data/db.json          → veritabanı (sürüm kontrolüne dahil değildir)
 ```
 
-**Ana varlıklar:** `Room` (numara, ad, kat, durum, m², maliyet çarpanı, yataklar,
-maxOccupancy, demirbaşlar, liste fiyatı) · `Reservation` (oda, misafir, kişi, tarihler,
-tutar, para birimi, komisyon oranı, kahvaltı, durum) · `Expense` (tarih, kategori, tutar,
-para birimi, aktif, dağıtım, oda, demirbaş, tekrarlama, dekont) · `Price`
-(oda × tarih → tutar, para birimi) · `Settings` (dağıtım yöntemi, sabit pay, hedef marj,
-kur, tarife, özel kategoriler).
+## 11. Gelecek Fazlar
+
+1. **Faz 2 — Kanal yöneticisi:** Booking/Airbnb gelir ve komisyonlarının API ile aktarımı
+   (komisyon oranı alanı hazır).
+2. **Faz 2 — İlişkisel veritabanı:** `data/db.json` yerine ACID garantili ilişkisel veritabanı.
+   Mevcut veri modeli bu geçişe uygun normalize edilmiştir.
+3. **Faz 2 — TCMB kur proxy'si:** Tarayıcıdan doğrudan çekimi CORS engellediğinden sunucu
+   tarafı kur servisi.
+4. **Faz 3 — Muhasebe entegrasyonu:** Mali müşavire doğrudan aktarım (Excel/CSV/PDF hazır).

@@ -415,6 +415,30 @@ route('DELETE', /^\/api\/users\/([\w-]+)$/, async ({ res, user, match }) => {
   sendJson(res, 200, { ok: true });
 });
 
+/* --- demo verisi (ilk kurulum kolaylığı) --- */
+
+route('POST', /^\/api\/demo$/, async ({ res, user }) => {
+  requireAdmin(user);
+  const { seedData } = await import('../src/core/seed.js');
+  const demo = seedData();
+  const loaded = await update((db) => {
+    db.rooms = demo.rooms;
+    db.reservations = demo.reservations;
+    db.expenses = demo.expenses;
+    db.prices = demo.prices;
+    db.settings = { ...demo.settings, tax: defaultTaxRates(), bills: db.settings?.bills ?? [] };
+    // Demo yüklemesi tam sıfırlamadır: personel, toptancı ve kasa kayıtları da temizlenir.
+    db.employees = [];
+    db.extraWorkers = [];
+    db.suppliers = [];
+    db.supplierTxns = [];
+    db.cashDays = [];
+    record(db, { user, action: 'import', entity: 'demo', summary: 'Demo verisi yüklendi; finansal kayıtlar sıfırlandı (kullanıcılar korundu)' });
+    return { rooms: db.rooms.length, reservations: db.reservations.length, expenses: db.expenses.length };
+  });
+  sendJson(res, 200, loaded);
+});
+
 /* --- Excel (PRD §2.1) --- */
 
 route('GET', /^\/api\/excel\/template$/, async ({ res, user, query }) => {

@@ -36,8 +36,8 @@ export function reservationsView(app) {
         h('button', { class: 'icon-btn', type: 'button', title: 'Düzenle', onClick: () => openReservationForm(app, res) }, '✏️'),
         h('button', {
           class: 'icon-btn', type: 'button', title: 'Sil',
-          onClick: () => confirmDialog(`${res.guestName} rezervasyonu silinsin mi?`, () => {
-            app.store.deleteReservation(res.id); app.refresh(); toast('Rezervasyon silindi.', 'warn');
+          onClick: () => confirmDialog(`${res.guestName} rezervasyonu silinsin mi?`, async () => {
+            await app.store.deleteReservation(res.id); app.refresh(); toast('Rezervasyon silindi.', 'warn');
           }),
         }, '🗑️'))));
   });
@@ -165,9 +165,10 @@ export function openReservationForm(app, source) {
           h('button', { class: 'btn ghost', type: 'button', onClick: close }, 'Vazgeç'),
           h('button', {
             class: 'btn primary', type: 'submit',
-            onClick: () => {
+            onClick: async () => {
+              clear(errorBox).classList.add('hidden');
               try {
-                app.store.saveReservation(draft);
+                await app.store.saveReservation(draft);
                 toast('Rezervasyon kaydedildi.');
                 close();
                 app.refresh();

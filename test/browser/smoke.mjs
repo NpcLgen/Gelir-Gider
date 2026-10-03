@@ -18,11 +18,52 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 page.setDefaultTimeout(8000);
-page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+page.on('console', (m) => {
+  // Ağ durum kodları (401/422) bilerek tetiklenen akışlardan gelir; JS hatası değildir.
+  if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) errors.push(m.text());
+});
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 
-const BASE = process.env.BASE_URL || 'http://localhost:5173/';
+const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173/';
+const USER = process.env.TEST_USER || 'Admin';
+const PASS = process.env.TEST_PASS || 'Admin2026';
+
+const CHANGED_PASS = process.env.TEST_PASS2 || 'Otel2026Guvenli';
+
 await page.goto(BASE, { waitUntil: 'load' });
+
+// PRD §1.1: uygulama giriş ekranıyla açılır.
+await page.waitForSelector('.login-card');
+
+/** Verilen şifreyle giriş dener; sonucu döndürür. */
+async function tryLogin(password) {
+  await page.fill('.login-card input[type="text"]', USER);
+  await page.fill('.login-card input[type="password"]', password);
+  await page.click('.login-card button[type="submit"]');
+  await page.waitForSelector('.layout, .login-card:has-text("Şifre Değiştirme Zorunlu"), .error-box:not(.hidden)', { timeout: 15000 });
+  if (await page.$('.login-card:has-text("Şifre Değiştirme Zorunlu")')) return 'mustChange';
+  if (await page.$('.layout')) return 'ok';
+  return 'failed';
+}
+
+let outcome = await tryLogin(PASS);
+// Şifre daha önce değiştirildiyse (tekrar çalıştırma) yeni şifreyle dene.
+if (outcome === 'failed') outcome = await tryLogin(CHANGED_PASS);
+if (outcome === 'mustChange') {
+  const fields = page.locator('.login-card input[type="password"]');
+  await fields.nth(0).fill(PASS);
+  await fields.nth(1).fill(CHANGED_PASS);
+  await fields.nth(2).fill(CHANGED_PASS);
+  await page.click('.login-card button[type="submit"]');
+}
+await page.waitForSelector('.layout', { timeout: 15000 });
+
+// Testler tekrarlanabilir olsun diye demo verisi yüklenir.
+await page.evaluate(async () => {
+  await fetch('/api/demo', { method: 'POST', credentials: 'same-origin' });
+});
+await page.reload({ waitUntil: 'load' });
+await page.waitForSelector('.layout', { timeout: 15000 });
 
 const step = async (name, fn) => {
   try {
@@ -35,7 +76,24 @@ const step = async (name, fn) => {
   }
 };
 
-const go = (label) => page.click(`.nav-item:has-text("${label}")`);
+/** Belirtilen metni içeren YENİ bir bildirim bekler (eski bildirimle karışmaz). */
+async function waitForToast(fragment) {
+  await page.waitForFunction(
+    (text) => {
+      const el = document.querySelector('.toast.show');
+      return Boolean(el && el.textContent.includes(text));
+    },
+    fragment,
+    { timeout: 10000 },
+  );
+  return page.textContent('.toast');
+}
+
+/** Bildirimi gizler ki sonraki adım eskisini okumasın. */
+const clearToast = () => page.evaluate(() => document.querySelector('.toast')?.classList.remove('show'));
+
+// Menü etiketleri emoji ile başlar; sondan eşleştirmek "Ayarlar"ı "Oda Ayarları"ndan ayırır.
+const go = (label) => page.locator('.nav-item').filter({ hasText: new RegExp(`${label}$`) }).first().click();
 const today = new Date();
 const y = today.getUTCFullYear();
 const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
@@ -95,7 +153,7 @@ await step('Hızlı tarih filtreleri dönemi değiştirir', async () => {
 /* ------------------------------------------ §1.1 fiyat takvimi -------- */
 
 await step('Takvim ızgarası odalar × günler olarak açılır', async () => {
-  await go('Fiyat / Gelir Takvimi');
+  await go('Fiyat Girişi');
   await page.waitForSelector('table.calendar');
   const rows = await page.$$('table.calendar tbody tr');
   if (rows.length < 8) throw new Error(`oda satırı ${rows.length}`);
@@ -119,10 +177,10 @@ await step('Toplu güncelleme hafta içi/hafta sonu fiyatı uygular', async () =
   const inputs = page.locator('.modal input[type="number"]');
   await inputs.nth(0).fill('2800');
   await inputs.nth(1).fill('4200');
+  await clearToast();
   await page.click('.modal button:has-text("Uygula")');
   await page.waitForSelector('.modal-backdrop', { state: 'detached' });
-  await page.waitForSelector('.toast.show');
-  const toastText = await page.textContent('.toast');
+  const toastText = await waitForToast('güne fiyat uygulandı');
   if (!/güne fiyat uygulandı/.test(toastText)) throw new Error(toastText);
   console.log(`   ${toastText.trim()}`);
 });
@@ -138,12 +196,12 @@ await step('Boş günleri vurgula anahtarı çalışır', async () => {
 /* ------------------------------------------ §1.2 / §2.3 giderler ------ */
 
 await step('Gider aktif/pasif anahtarı kaydı silmeden hesaptan düşer', async () => {
-  await go('Gider Yönetimi');
+  await go('Genel Harcamalar');
   await page.waitForSelector('.toggle');
   const rowsBefore = (await page.$$('tbody tr')).length;
+  await clearToast();
   await page.click('.toggle.on >> nth=0');
-  await page.waitForSelector('.toast.show');
-  const message = await page.textContent('.toast');
+  const message = await waitForToast('pasife');
   if (!message.includes('pasife')) throw new Error(message);
   const rowsAfter = (await page.$$('tbody tr')).length;
   if (rowsAfter !== rowsBefore) throw new Error('kayıt silinmiş olmamalı');
@@ -210,7 +268,7 @@ await step('Oda kartından demirbaşa doğrudan gider yazılır', async () => {
 /* ------------------------------------------ rezervasyon kuralları ----- */
 
 await step('Rezervasyonda kişi sayısı oda kapasitesiyle sınırlı', async () => {
-  await go('Rezervasyonlar');
+  await go('Gelirler');
   await page.click('button:has-text("Yeni Rezervasyon")');
   await page.waitForSelector('.modal');
   await page.selectOption('select.room-select', { index: 1 }); // 102 — 2 kişilik
@@ -235,8 +293,13 @@ await step('EUR rezervasyon komisyon oranıyla kaydedilir', async () => {
   await page.fill('.modal input[type="number"] >> nth=0', '250');
   await page.selectOption('.modal select.res-currency', 'EUR');
   await page.click('.modal button:has-text("Kaydet")');
+  // Kayıt sunucuya gittiği için modalın kapanmasını ya da hatanın belirmesini bekle.
+  await page.waitForSelector('.modal-backdrop, .error-box:not(.hidden)', { state: 'attached' });
+  await page.waitForFunction(
+    () => !document.querySelector('.modal-backdrop') || document.querySelector('.error-box:not(.hidden)'),
+    null, { timeout: 10000 },
+  );
   if (await page.isVisible('.error-box:not(.hidden)')) throw new Error(await page.textContent('.error-list'));
-  await page.waitForSelector('.modal-backdrop', { state: 'detached' });
   const text = await page.textContent('tbody');
   if (!text.includes('Test Misafir')) throw new Error('rezervasyon listeye eklenmedi');
 });
@@ -244,36 +307,45 @@ await step('EUR rezervasyon komisyon oranıyla kaydedilir', async () => {
 /* ------------------------------------------ §8 ayarlar ---------------- */
 
 await step('Dağıtım yöntemi A/B/C arasında değiştirilir', async () => {
-  await go('Sistem Ayarları');
+  await go('Ayarlar');
   await page.waitForSelector('.method-card');
   await page.click('.method-card:has-text("Metrekare")');
+  await clearToast();
   await page.click('button:has-text("Ayarları Kaydet")');
-  await page.waitForSelector('.toast.show');
+  await waitForToast('Ayarlar kaydedildi');
   await go('Dashboard');
   const footer = await page.textContent('.method-footer');
   if (!footer.includes('Metrekare')) throw new Error(footer);
   console.log(`   ${footer.trim()}`);
-  await go('Sistem Ayarları');
+  await go('Ayarlar');
   await page.click('.method-card:has-text("Özel Katsayı")');
+  await clearToast();
   await page.click('button:has-text("Ayarları Kaydet")');
+  await waitForToast('Ayarlar kaydedildi');
 });
 
 await step('Hedef marj paneldeki renklendirmeyi belirler', async () => {
   await page.locator('input.target-margin').fill('0.99');
+  await clearToast();
   await page.click('button:has-text("Ayarları Kaydet")');
+  await waitForToast('Ayarlar kaydedildi');
   await go('Dashboard');
   const tone = await page.getAttribute('.kpi:has-text("Kâr Marjı") strong', 'class');
   if (tone !== 'bad') throw new Error(`hedef altındayken kırmızı olmalı, sınıf: ${tone}`);
-  await go('Sistem Ayarları');
+  await go('Ayarlar');
   await page.locator('input.target-margin').fill('0.35');
+  await clearToast();
   await page.click('button:has-text("Ayarları Kaydet")');
+  await waitForToast('Ayarlar kaydedildi');
 });
 
 await step('Kategori yöneticisi özel kategori ekler', async () => {
   await page.click('button:has-text("Kategori Ekle")');
   await page.fill('.category-row input[type="text"]', 'Havuz Kimyasalı');
+  await clearToast();
   await page.click('button:has-text("Ayarları Kaydet")');
-  await go('Gider Yönetimi');
+  await waitForToast('Ayarlar kaydedildi');
+  await go('Genel Harcamalar');
   await page.click('button:has-text("Yeni Gider")');
   const options = await page.$$eval('select.expense-category option', (els) => els.map((o) => o.textContent));
   if (!options.includes('Havuz Kimyasalı')) throw new Error('özel kategori formda yok');
@@ -296,7 +368,7 @@ await step('Dashboard: oda bazlı fiyat tavsiyesi tablosu', async () => {
 });
 
 await step('Takvim: alt limitin altındaki fiyat ZARAR olarak uyarır', async () => {
-  await go('Fiyat / Gelir Takvimi');
+  await go('Fiyat Girişi');
   await page.waitForSelector('table.calendar');
   const legend = await page.textContent('.legend-bar');
   if (!legend.includes('zarar')) throw new Error(`açıklama satırı eksik: ${legend}`);
@@ -346,7 +418,7 @@ await step('Takvim: kaydedilen düşük fiyat hücrede işaretlenir', async () =
 });
 
 await step('Rezervasyon: düşük gecelik net fiyat uyarılır', async () => {
-  await go('Rezervasyonlar');
+  await go('Gelirler');
   await page.click('button:has-text("Yeni Rezervasyon")');
   await page.waitForSelector('.modal');
   await page.fill('.modal input[type="text"]', 'Ucuz Satış Testi');
@@ -392,7 +464,8 @@ await step('Sağ alt köşedeki hızlı ekle butonu gider formunu açar', async 
 
 await step('Yenilemede veriler korunur (localStorage)', async () => {
   await page.reload({ waitUntil: 'load' });
-  await go('Gider Yönetimi');
+  await page.waitForSelector('.layout', { timeout: 15000 });
+  await go('Genel Harcamalar');
   const text = await page.textContent('tbody');
   if (!text.includes('Jakuzi filtre değişimi')) throw new Error('kalıcılık yok');
 });
@@ -400,9 +473,9 @@ await step('Yenilemede veriler korunur (localStorage)', async () => {
 await go('Dashboard');
 await page.waitForSelector('.kpi-grid');
 await page.screenshot({ path: 'test/browser/screenshots/dashboard.png', fullPage: true });
-await go('Fiyat / Gelir Takvimi');
+await go('Fiyat Girişi');
 await page.screenshot({ path: 'test/browser/screenshots/takvim.png' });
-await go('Gider Yönetimi');
+await go('Genel Harcamalar');
 await page.screenshot({ path: 'test/browser/screenshots/giderler.png' });
 await go('Oda Ayarları');
 await page.click('.room-tile:has-text("101")');

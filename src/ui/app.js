@@ -1,38 +1,94 @@
 /**
- * Uygulama kabuğu (PRD §4 UI/UX mimarisi):
- * sol menü, üst şeritte dönem filtreleri ve kur anahtarı, sağ altta hızlı ekle butonu.
+ * Uygulama kabuğu (PRD §1.1, §4, §9).
+ *
+ * Açılışta oturum kontrol edilir: oturum yoksa giriş ekranı zorunludur.
+ * Menü, kullanıcının modül yetkilerinden dinamik olarak kurulur; yetkisiz
+ * sayfaya adres çubuğundan gidilse bile erişim engellenir.
  */
 
 import { CURRENCIES, QUICK_RANGES } from '../core/catalog.js';
 import { buildReport } from '../core/costEngine.js';
 import { monthPeriod, period as makePeriod, quickRange, shiftMonth } from '../core/dates.js';
 import { createPresenter } from '../core/format.js';
+import { api, setUnauthorizedHandler } from '../core/api.js';
 import { createStore } from '../core/store.js';
 import { calendarView, openBulkEditor } from './calendarView.js';
+import { cashView } from './cashView.js';
 import { dashboardView } from './dashboardView.js';
 import { clear, h, toast } from './dom.js';
+import { employeesView } from './employeesView.js';
+import { excelView } from './excelView.js';
 import { expensesView, openExpenseForm } from './expensesView.js';
+import { extraWorkersView } from './extraWorkersView.js';
+import { forcePasswordChange, loginView } from './login.js';
+import { openPrintDialog } from './printDialog.js';
 import { reportsView } from './reportsView.js';
 import { reservationsView } from './reservationsView.js';
 import { roomsView } from './roomsView.js';
 import { settingsView } from './settingsView.js';
+import { suppliersView } from './suppliersView.js';
+import { taxView } from './taxView.js';
+import { openOwnPasswordForm, usersView } from './usersView.js';
 
+/** PRD §9 — ana menü yapısı. `module` yetkisi olmayan girdi menüde görünmez. */
 const VIEWS = [
-  { key: 'panel', label: 'Dashboard', icon: '📊', render: dashboardView },
-  { key: 'takvim', label: 'Fiyat / Gelir Takvimi', icon: '🗓️', render: calendarView },
-  { key: 'giderler', label: 'Gider Yönetimi', icon: '🧾', render: expensesView },
-  { key: 'rezervasyonlar', label: 'Rezervasyonlar', icon: '🛎️', render: reservationsView },
-  { key: 'odalar', label: 'Oda Ayarları', icon: '🚪', render: roomsView },
-  { key: 'raporlar', label: 'Finansal Raporlar', icon: '📁', render: reportsView },
-  { key: 'ayarlar', label: 'Sistem Ayarları', icon: '⚙️', render: settingsView },
+  { key: 'panel', label: 'Dashboard', icon: '📊', module: 'dashboard', group: 'Genel', render: dashboardView },
+  { key: 'gelirler', label: 'Gelirler', icon: '🛎️', module: 'gelirler', group: 'Genel', render: reservationsView },
+  { key: 'takvim', label: 'Fiyat Girişi', icon: '🗓️', module: 'fiyatGirisi', group: 'Genel', render: calendarView },
+  { key: 'odalar', label: 'Oda Ayarları', icon: '🚪', module: 'odalar', group: 'Genel', render: roomsView },
+
+  { key: 'giderler', label: 'Genel Harcamalar', icon: '🧾', module: 'genelHarcamalar', group: 'Giderler', render: expensesView },
+  { key: 'calisanlar', label: 'Çalışanlar', icon: '👷', module: 'calisanlar', group: 'Giderler', render: employeesView },
+  { key: 'ekstra', label: 'Ekstra Çalışan', icon: '🧑‍🔧', module: 'ekstraCalisan', group: 'Giderler', render: extraWorkersView },
+  { key: 'vergiler', label: 'Vergiler', icon: '🧮', module: 'vergiler', group: 'Giderler', render: taxView },
+
+  { key: 'toptancilar', label: 'Toptancılar', icon: '🥬', module: 'toptancilar', group: 'Restoran', render: suppliersView },
+
+  { key: 'kasa', label: 'Gün Sonu / Kasa', icon: '💰', module: 'kasa', group: 'Kasa', render: cashView },
+
+  { key: 'raporlar', label: 'Finansal Raporlar', icon: '📁', module: 'finansalRaporlar', group: 'Raporlar', render: reportsView },
+  { key: 'excel', label: 'Excel İşlemleri', icon: '📑', module: 'excelIceAktarim', altModule: 'excelDisaAktarim', group: 'Raporlar', render: excelView },
+
+  { key: 'kullanicilar', label: 'Kullanıcı ve Yetki', icon: '👥', module: 'kullaniciYonetimi', group: 'Yönetim', render: usersView },
+  { key: 'ayarlar', label: 'Ayarlar', icon: '⚙️', module: 'ayarlar', group: 'Yönetim', render: settingsView },
 ];
 
-export function mount(root) {
-  const store = createStore();
+export async function mount(root) {
+  setUnauthorizedHandler(() => showLogin('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.'));
+
+  const session = await api.get('/api/auth/me').catch(() => null);
+  if (!session?.user) {
+    showLogin();
+    return null;
+  }
+  return startApp(root, session.user);
+
+  function showLogin(message) {
+    loginView(root, (user) => startApp(root, user));
+    if (message) toast(message, 'warn');
+  }
+}
+
+async function startApp(root, user) {
+  const store = await createStore();
+
+  if (user.mustChangePassword) {
+    forcePasswordChange(root, {
+      store, user,
+      onDone: () => startApp(root, { ...user, mustChangePassword: false }),
+      onLogout: () => mount(root),
+    });
+    return null;
+  }
+
   let activeRange = 'thisMonth';
   let custom = null;
-  let current = location.hash.slice(1) || 'panel';
-  if (!VIEWS.some((v) => v.key === current)) current = 'panel';
+  const me = () => store.getState().me ?? user;
+  const can = (moduleKey) => Boolean(me()?.isAdmin || me()?.permissions?.[moduleKey]);
+
+  const allowed = VIEWS.filter((view) => can(view.module) || (view.altModule && can(view.altModule)));
+  let current = location.hash.slice(1) || allowed[0]?.key || 'panel';
+  if (!allowed.some((v) => v.key === current)) current = allowed[0]?.key ?? 'panel';
 
   const content = h('main', { class: 'content' });
   const nav = h('nav', { class: 'nav' });
@@ -40,10 +96,13 @@ export function mount(root) {
 
   const app = {
     store,
+    can,
+    me,
     period: () => (custom ? makePeriod(custom.from, custom.to) : quickRange(activeRange)),
     present: () => createPresenter(store.getState().settings),
     report: () => app.reportFor(app.period()),
     reportFor: (p) => buildReport({ ...store.getState(), period: p }),
+    openPrintDialog,
     addExpenseFor(roomId, amenityKey) {
       openExpenseForm(app, null, { roomId, amenityKey, category: 'maintenance', allocation: 'direct' });
     },
@@ -53,6 +112,10 @@ export function mount(root) {
       app.refresh();
     },
     go(key) {
+      if (!allowed.some((v) => v.key === key)) {
+        toast('Bu sayfa için yetkiniz bulunmuyor.', 'error');
+        return;
+      }
       current = key;
       location.hash = key;
       app.refresh();
@@ -61,14 +124,24 @@ export function mount(root) {
       renderNav();
       renderTopbar();
       clear(content);
-      const view = VIEWS.find((v) => v.key === current) ?? VIEWS[0];
+      const view = allowed.find((v) => v.key === current) ?? allowed[0];
+      if (!view) {
+        content.appendChild(h('div', { class: 'card empty' },
+          'Hiçbir modüle yetkiniz yok. Lütfen yöneticinize başvurun.'));
+        return;
+      }
       content.appendChild(view.render(app));
     },
   };
 
   function renderNav() {
     clear(nav);
-    for (const view of VIEWS) {
+    let lastGroup = null;
+    for (const view of allowed) {
+      if (view.group !== lastGroup) {
+        nav.appendChild(h('div', { class: 'nav-group' }, view.group));
+        lastGroup = view.group;
+      }
       nav.appendChild(h('button', {
         class: `nav-item${view.key === current ? ' active' : ''}`,
         type: 'button',
@@ -126,38 +199,80 @@ export function mount(root) {
       ...CURRENCIES.map((currency) => h('button', {
         class: `cur-btn${settings.displayCurrency === currency.key ? ' active' : ''}`,
         type: 'button',
-        onClick: () => { store.setDisplayCurrency(currency.key); app.refresh(); },
+        onClick: async () => { await store.setDisplayCurrency(currency.key); app.refresh(); },
       }, `${currency.symbol} ${currency.key}`)));
+
+    const account = h('details', { class: 'account-menu' },
+      h('summary', { class: 'chip account-chip' },
+        h('span', { class: 'avatar' }, (me().displayName || me().username).slice(0, 1).toLocaleUpperCase('tr')),
+        me().displayName || me().username,
+        me().isAdmin ? h('span', { class: 'pill pill-active' }, 'Admin') : null),
+      h('div', { class: 'card popover right stack tight' },
+        h('div', { class: 'muted small' }, `@${me().username}`),
+        h('button', {
+          class: 'btn small ghost', type: 'button',
+          onClick: () => openOwnPasswordForm(app),
+        }, '🔑 Şifre Değiştir'),
+        h('button', {
+          class: 'btn small danger ghost', type: 'button',
+          onClick: async () => {
+            await api.post('/api/auth/logout').catch(() => {});
+            location.hash = '';
+            mount(root);
+          },
+        }, '🚪 Çıkış Yap')));
 
     topbar.appendChild(h('div', { class: 'row between center wrap gap' },
       h('div', { class: 'row gap center wrap' }, monthNav, quick, customRange),
       h('div', { class: 'row gap center' },
-        h('span', { class: 'muted small' }, `1 € = ${settings.fx.rate.toFixed(2)} ₺`),
-        currencyToggle)));
+        h('span', { class: 'muted small' }, `1 € = ${(settings.fx?.rate ?? 0).toFixed(2)} ₺`),
+        currencyToggle,
+        can('yazdirma') ? h('button', {
+          class: 'btn small', type: 'button', title: 'Yazdırma seçenekleri',
+          onClick: () => openPrintDialog(allowed.find((v) => v.key === current)?.label ?? 'Rapor'),
+        }, '🖨️') : null,
+        account)));
   }
 
   window.addEventListener('hashchange', () => {
-    const key = location.hash.slice(1) || 'panel';
-    if (VIEWS.some((v) => v.key === key) && key !== current) {
-      current = key;
-      app.refresh();
+    const key = location.hash.slice(1) || current;
+    if (key !== current) {
+      if (allowed.some((v) => v.key === key)) {
+        current = key;
+        app.refresh();
+      } else {
+        // Yetkisiz sayfaya adresten gidilemez.
+        location.hash = current;
+        toast('Bu sayfa için yetkiniz bulunmuyor.', 'error');
+      }
     }
   });
 
-  const fab = h('div', { class: 'fab no-print' },
-    h('div', { class: 'fab-menu' },
-      h('button', { class: 'btn small', type: 'button', onClick: () => openExpenseForm(app, null) }, '＋ Gider Ekle'),
-      h('button', { class: 'btn small', type: 'button', onClick: () => openBulkEditor(app) }, '＋ Hızlı Fiyat Gir')),
-    h('button', { class: 'fab-btn', type: 'button', title: 'Hızlı ekle', 'aria-label': 'Hızlı ekle' }, '＋'));
+  const fab = can('genelHarcamalar') || can('fiyatGirisi')
+    ? h('div', { class: 'fab no-print' },
+      h('div', { class: 'fab-menu' },
+        can('genelHarcamalar')
+          ? h('button', { class: 'btn small', type: 'button', onClick: () => openExpenseForm(app, null) }, '＋ Gider Ekle')
+          : null,
+        can('fiyatGirisi')
+          ? h('button', { class: 'btn small', type: 'button', onClick: () => openBulkEditor(app) }, '＋ Hızlı Fiyat Gir')
+          : null),
+      h('button', { class: 'fab-btn', type: 'button', title: 'Hızlı ekle', 'aria-label': 'Hızlı ekle' }, '＋'))
+    : null;
 
   clear(root).appendChild(h('div', { class: 'layout' },
     h('aside', { class: 'sidebar no-print' },
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, '🏨'),
-        h('div', {}, h('strong', {}, 'Butik Otel BI'), h('div', { class: 'muted small' }, 'Gelir-Gider & Kârlılık'))),
+        h('div', {}, h('strong', {}, 'Otel Finans'), h('div', { class: 'muted small' }, 'Yönetim Sistemi'))),
       nav,
-      h('div', { class: 'sidebar-foot muted small' }, 'Tek kullanıcılı finansal zekâ aracı')),
+      h('div', { class: 'sidebar-foot muted small' }, `${allowed.length} modül erişiminiz var`)),
     h('div', { class: 'main' }, topbar, content)));
-  root.appendChild(fab);
+  if (fab) root.appendChild(fab);
+
+  // Yeni dönem açıldığında düzenli fatura kalemleri 0 TL olarak oluşturulur.
+  if (can('genelHarcamalar')) {
+    store.ensureBills(app.period().from.slice(0, 7)).catch(() => {});
+  }
 
   app.refresh();
   return app;

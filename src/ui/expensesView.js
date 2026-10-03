@@ -43,8 +43,8 @@ export function expensesView(app) {
         class: `toggle${expense.active ? ' on' : ''}`, type: 'button',
         title: expense.active ? 'Aktif — hesaplamaya dâhil' : 'Pasif — hesaplamadan düşüldü',
         'aria-pressed': String(expense.active),
-        onClick: () => {
-          const next = app.store.toggleExpense(expense.id);
+        onClick: async () => {
+          const next = await app.store.toggleExpense(expense.id);
           toast(next.active ? 'Gider aktifleştirildi.' : 'Gider pasife alındı, hesaplamadan düşüldü.', next.active ? 'ok' : 'warn');
           app.refresh();
         },
@@ -85,8 +85,8 @@ export function expensesView(app) {
         h('button', { class: 'icon-btn', type: 'button', title: 'Düzenle', onClick: () => openExpenseForm(app, expense) }, '✏️'),
         h('button', {
           class: 'icon-btn', type: 'button', title: 'Sil',
-          onClick: () => confirmDialog(`"${expense.description}" gideri silinsin mi?`, () => {
-            app.store.deleteExpense(expense.id); app.refresh(); toast('Gider silindi.', 'warn');
+          onClick: () => confirmDialog(`"${expense.description}" gideri silinsin mi?`, async () => {
+            await app.store.deleteExpense(expense.id); app.refresh(); toast('Gider silindi.', 'warn');
           }),
         }, '🗑️'))));
   });
@@ -159,9 +159,10 @@ function openRecurringDialog(app, expense) {
         h('button', { class: 'btn ghost', type: 'button', onClick: close }, 'Vazgeç'),
         h('button', {
           class: 'btn primary', type: 'submit',
-          onClick: () => {
+          onClick: async () => {
+            clear(errorBox).classList.add('hidden');
             try {
-              app.store.saveExpense({ ...expense, recurring: draft });
+              await app.store.saveExpense({ ...expense, recurring: draft });
               toast(draft.enabled ? 'Gider her ay otomatik yansıyacak.' : 'Tekrarlama kapatıldı.');
               close();
               app.refresh();
@@ -308,9 +309,10 @@ export function openExpenseForm(app, source, preset = {}) {
           h('button', { class: 'btn ghost', type: 'button', onClick: close }, 'Vazgeç'),
           h('button', {
             class: 'btn primary', type: 'submit',
-            onClick: () => {
+            onClick: async () => {
+              clear(errorBox).classList.add('hidden');
               try {
-                app.store.saveExpense(draft);
+                await app.store.saveExpense(draft);
                 toast('Gider kaydedildi.');
                 close();
                 app.refresh();

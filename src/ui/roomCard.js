@@ -104,9 +104,10 @@ export function openRoomCard(app, source) {
 
       rerender();
 
-      const save = () => {
+      const save = async () => {
+        clear(errorBox).classList.add('hidden');
         try {
-          const saved = app.store.saveRoom(draft);
+          const saved = await app.store.saveRoom(draft);
           toast(`${roomLabel(saved)} kaydedildi.`);
           close();
           app.refresh();
@@ -136,7 +137,7 @@ export function openRoomCard(app, source) {
             class: 'btn danger ghost', type: 'button',
             onClick: () => confirmDialog(
               `${roomLabel(draft)} odası ve bağlı rezervasyonları silinsin mi?`,
-              () => { app.store.deleteRoom(draft.id); close(); app.refresh(); toast('Oda silindi.', 'warn'); },
+              async () => { await app.store.deleteRoom(draft.id); close(); app.refresh(); toast('Oda silindi.', 'warn'); },
             ),
           }, '🗑️ Odayı Sil') : null),
       );

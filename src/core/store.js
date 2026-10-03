@@ -1,325 +1,135 @@
 /**
- * Uygulama durumu: tarayıcıda localStorage'a yazan, abonelik destekli basit store.
- * Node tarafında (testlerde) bellek içi adaptörle de çalışır.
+ * Uygulama durumu — sunucu API'si üzerinden.
+ *
+ * `getState()` eşzamanlı çalışır (görünümler doğrudan okur); tüm değiştirme
+ * işlemleri sunucuya gider ve ardından durum yeniden yüklenir, böylece istemci
+ * ile sunucu arasında sapma oluşmaz. Doğrulama hem sunucuda hem istemcide
+ * aynı kurallarla yapılır; sunucu son sözü söyler.
  */
 
-import {
-  createCategory,
-  createExpense,
-  createPriceEntry,
-  createReservation,
-  createRoom,
-  defaultSettings,
-  validateExpense,
-  validatePriceEntry,
-  validateReservation,
-  validateRoom,
-  validateSettings,
-} from './model.js';
-import { defaultFx } from './fx.js';
-import { eachDate, isWeekend, period as makePeriod } from './dates.js';
-import { seedData } from './seed.js';
+import { api, ValidationError } from './api.js';
+import { defaultSettings } from './model.js';
+import { defaultTaxRates } from './finance.js';
 
-const STORAGE_KEY = 'gelir-gider:v1';
+export { ValidationError };
 
-const memoryAdapter = () => {
-  let value = null;
-  return { getItem: () => value, setItem: (_k, v) => { value = v; }, removeItem: () => { value = null; } };
-};
+const emptyState = () => ({
+  rooms: [], reservations: [], expenses: [], prices: {},
+  settings: { ...defaultSettings(), tax: defaultTaxRates(), bills: [] },
+  employees: [], extraWorkers: [], suppliers: [], supplierTxns: [], cashDays: [],
+  users: [], auditLog: [], modules: [], me: null,
+});
 
-function defaultAdapter() {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('__probe__', '1');
-      localStorage.removeItem('__probe__');
-      return localStorage;
-    }
-  } catch {
-    /* gizli sekme vb. — belleğe düş */
-  }
-  return memoryAdapter();
-}
-
-const DAY_MS = 86400000;
-const shiftByDays = (date, days) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
-
-const emptyState = () => ({ rooms: [], reservations: [], expenses: [], prices: {}, settings: defaultSettings() });
-
-function mergeSettings(saved) {
-  const base = defaultSettings();
-  return {
-    ...base,
-    ...(saved ?? {}),
-    fx: { ...defaultFx(), ...(saved?.fx ?? {}) },
-  };
-}
-
-export class ValidationError extends Error {
-  constructor(errors) {
-    super(errors.join('\n'));
-    this.name = 'ValidationError';
-    this.errors = errors;
-  }
-}
-
-export function createStore({ adapter = defaultAdapter(), seed = true } = {}) {
-  let state = load();
+export async function createStore() {
+  let state = emptyState();
   const listeners = new Set();
 
-  function load() {
-    try {
-      const raw = adapter.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return {
-          rooms: (parsed.rooms ?? []).map(createRoom),
-          reservations: (parsed.reservations ?? []).map(createReservation),
-          expenses: (parsed.expenses ?? []).map(createExpense),
-          prices: parsed.prices ?? {},
-          settings: mergeSettings(parsed.settings),
-        };
-      }
-    } catch {
-      /* bozuk kayıt — demoya dön */
-    }
-    return seed ? seedData() : emptyState();
+  const notify = () => listeners.forEach((fn) => fn(state));
+
+  async function reload() {
+    state = { ...emptyState(), ...(await api.get('/api/state')) };
+    notify();
+    return state;
   }
 
-  function persist() {
-    try {
-      adapter.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      /* kota dolu — sessizce geç */
-    }
-    listeners.forEach((fn) => fn(state));
-  }
+  /** Kaydet → sunucudan tazele kalıbı. */
+  const mutate = async (fn) => {
+    const result = await fn();
+    await reload();
+    return result;
+  };
 
-  const api = {
+  await reload();
+
+  return {
     getState: () => state,
+    reload,
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
 
     /* --- Odalar --- */
-    saveRoom(patch) {
-      const room = createRoom(patch);
-      const errors = validateRoom(room, { rooms: state.rooms });
-      if (errors.length) throw new ValidationError(errors);
-      const index = state.rooms.findIndex((r) => r.id === room.id);
-      state.rooms = index >= 0
-        ? state.rooms.map((r) => (r.id === room.id ? room : r))
-        : [...state.rooms, room];
-      state.rooms.sort((a, b) => String(a.number).localeCompare(String(b.number), 'tr', { numeric: true }));
-      persist();
-      return room;
-    },
-    deleteRoom(id) {
-      state.rooms = state.rooms.filter((r) => r.id !== id);
-      state.reservations = state.reservations.filter((r) => r.roomId !== id);
-      state.expenses = state.expenses.map((e) =>
-        e.roomId === id ? { ...e, roomId: '', amenityKey: '', allocation: e.allocation === 'direct' ? 'general' : e.allocation } : e,
-      );
-      const { [id]: _removed, ...restPrices } = state.prices;
-      state.prices = restPrices;
-      persist();
-    },
-    /** Demirbaş kutucuğunu aç/kapat — oda kartındaki checkbox modülü bunu kullanır. */
+    saveRoom: (patch) => mutate(() => api.post('/api/rooms', patch)),
+    deleteRoom: (id) => mutate(() => api.del(`/api/rooms/${id}`)),
     toggleAmenity(roomId, amenityKey) {
       const room = state.rooms.find((r) => r.id === roomId);
-      if (!room) return null;
+      if (!room) return Promise.resolve(null);
       const amenities = room.amenities.includes(amenityKey)
         ? room.amenities.filter((k) => k !== amenityKey)
         : [...room.amenities, amenityKey];
-      return api.saveRoom({ ...room, amenities });
+      return mutate(() => api.post('/api/rooms', { ...room, amenities }));
     },
 
     /* --- Rezervasyonlar --- */
-    saveReservation(patch) {
-      const reservation = createReservation(patch);
-      const errors = validateReservation(reservation, {
-        rooms: state.rooms,
-        reservations: state.reservations,
-      });
-      if (errors.length) throw new ValidationError(errors);
-      const index = state.reservations.findIndex((r) => r.id === reservation.id);
-      state.reservations = index >= 0
-        ? state.reservations.map((r) => (r.id === reservation.id ? reservation : r))
-        : [...state.reservations, reservation];
-      state.reservations.sort((a, b) => b.checkIn.localeCompare(a.checkIn));
-      persist();
-      return reservation;
-    },
-    deleteReservation(id) {
-      state.reservations = state.reservations.filter((r) => r.id !== id);
-      persist();
-    },
+    saveReservation: (patch) => mutate(() => api.post('/api/reservations', patch)),
+    deleteReservation: (id) => mutate(() => api.del(`/api/reservations/${id}`)),
 
     /* --- Giderler --- */
-    saveExpense(patch) {
-      const expense = createExpense(patch);
-      const errors = validateExpense(expense, { rooms: state.rooms });
-      if (errors.length) throw new ValidationError(errors);
-      const index = state.expenses.findIndex((e) => e.id === expense.id);
-      state.expenses = index >= 0
-        ? state.expenses.map((e) => (e.id === expense.id ? expense : e))
-        : [...state.expenses, expense];
-      state.expenses.sort((a, b) => b.date.localeCompare(a.date));
-      persist();
-      return expense;
-    },
-    /** PRD §1.2 — gideri silmeden hesaplamadan çıkar/geri al. */
+    saveExpense: (patch) => mutate(() => api.post('/api/expenses', patch)),
+    deleteExpense: (id) => mutate(() => api.del(`/api/expenses/${id}`)),
     toggleExpense(id) {
-      state.expenses = state.expenses.map((e) => (e.id === id ? { ...e, active: !e.active } : e));
-      persist();
-      return state.expenses.find((e) => e.id === id);
+      const expense = state.expenses.find((e) => e.id === id);
+      if (!expense) return Promise.resolve(null);
+      return mutate(() => api.post('/api/expenses', { ...expense, active: !expense.active }));
     },
-    deleteExpense(id) {
-      state.expenses = state.expenses.filter((e) => e.id !== id);
-      persist();
-    },
+    /** PRD §3.5 — dönem başında fatura kalemlerini 0 TL olarak açar. */
+    ensureBills: (month) => mutate(() => api.post(`/api/periods/${month}/bills`)),
 
-    /* --- Fiyat takvimi (PRD §1.1) --- */
-    savePrice(roomId, date, patch) {
-      const entry = createPriceEntry(patch);
-      const errors = validatePriceEntry(entry);
-      if (errors.length) throw new ValidationError(errors);
-      const roomPrices = { ...(state.prices[roomId] ?? {}) };
-      if (entry.amount > 0) roomPrices[date] = entry;
-      else delete roomPrices[date];
-      state.prices = { ...state.prices, [roomId]: roomPrices };
-      persist();
-      return entry;
-    },
-    clearPrice(roomId, date) {
-      const roomPrices = { ...(state.prices[roomId] ?? {}) };
-      delete roomPrices[date];
-      state.prices = { ...state.prices, [roomId]: roomPrices };
-      persist();
-    },
-    /**
-     * Toplu fiyat güncelleme (PRD §1.1 / §6.2).
-     * Hafta içi ve hafta sonu için ayrı tutar verilebilir; `overwrite` kapalıysa
-     * yalnızca boş günler doldurulur.
-     */
-    bulkPrice({ roomIds, from, to, weekdayAmount, weekendAmount, currency = 'TRY', overwrite = true }) {
-      const errors = [];
-      if (!roomIds?.length) errors.push('En az bir oda seçilmelidir.');
-      if (!from || !to || from > to) errors.push('Geçerli bir tarih aralığı seçiniz.');
-      if (!(weekdayAmount > 0) && !(weekendAmount > 0)) errors.push('En az bir fiyat girilmelidir.');
-      if (errors.length) throw new ValidationError(errors);
+    /* --- Personel ve ekstra çalışan --- */
+    saveEmployee: (patch) => mutate(() => api.post('/api/employees', patch)),
+    deleteEmployee: (id) => mutate(() => api.del(`/api/employees/${id}`)),
+    saveExtraWorker: (patch) => mutate(() => api.post('/api/extraWorkers', patch)),
+    deleteExtraWorker: (id) => mutate(() => api.del(`/api/extraWorkers/${id}`)),
 
-      let written = 0;
-      const next = { ...state.prices };
-      for (const roomId of roomIds) {
-        const roomPrices = { ...(next[roomId] ?? {}) };
-        for (const date of eachDate(makePeriod(from, to))) {
-          const amount = isWeekend(date) ? weekendAmount : weekdayAmount;
-          if (!(amount > 0)) continue;
-          if (!overwrite && roomPrices[date]?.amount > 0) continue;
-          roomPrices[date] = createPriceEntry({ amount, currency });
-          written += 1;
-        }
-        next[roomId] = roomPrices;
-      }
-      state.prices = next;
-      persist();
-      return written;
-    },
-    /** Fiyatları başka bir tarih aralığından kopyalar (PRD §6.2). */
-    copyPrices({ roomIds, sourceFrom, sourceTo, targetFrom, overwrite = false }) {
-      const sourceDates = eachDate(makePeriod(sourceFrom, sourceTo));
-      if (!sourceDates.length) throw new ValidationError(['Kaynak aralık boş.']);
-      let written = 0;
-      const next = { ...state.prices };
-      for (const roomId of roomIds) {
-        const roomPrices = { ...(next[roomId] ?? {}) };
-        sourceDates.forEach((date, index) => {
-          const source = roomPrices[date];
-          if (!source?.amount) return;
-          const targetDate = shiftByDays(targetFrom, index);
-          if (!overwrite && roomPrices[targetDate]?.amount > 0) return;
-          roomPrices[targetDate] = createPriceEntry(source);
-          written += 1;
-        });
-        next[roomId] = roomPrices;
-      }
-      state.prices = next;
-      persist();
-      return written;
-    },
+    /* --- Toptancılar --- */
+    saveSupplier: (patch) => mutate(() => api.post('/api/suppliers', patch)),
+    deleteSupplier: (id) => mutate(() => api.del(`/api/suppliers/${id}`)),
+    saveSupplierTxn: (patch) => mutate(() => api.post('/api/supplierTxns', patch)),
+    deleteSupplierTxn: (id) => mutate(() => api.del(`/api/supplierTxns/${id}`)),
 
-    /* --- Kategori yöneticisi (PRD §8.3) --- */
-    saveCategory(patch) {
-      const category = createCategory(patch);
-      if (!category.label) throw new ValidationError(['Kategori adı zorunludur.']);
-      const list = state.settings.customCategories ?? [];
-      const index = list.findIndex((c) => c.key === category.key);
-      const next = index >= 0 ? list.map((c) => (c.key === category.key ? category : c)) : [...list, category];
-      state.settings = { ...state.settings, customCategories: next };
-      persist();
-      return category;
-    },
-    deleteCategory(key) {
-      state.settings = {
-        ...state.settings,
-        customCategories: (state.settings.customCategories ?? []).filter((c) => c.key !== key),
-      };
-      persist();
-    },
+    /* --- Kasa --- */
+    saveCashDay: (patch) => mutate(() => api.post('/api/cashDays', patch)),
+    deleteCashDay: (id) => mutate(() => api.del(`/api/cashDays/${id}`)),
 
-    /* --- Kur (PRD §2.4) --- */
-    setDisplayCurrency(currency) {
-      state.settings = { ...state.settings, displayCurrency: currency };
-      persist();
-      return currency;
-    },
-    saveFx(patch) {
-      const fx = { ...state.settings.fx, ...patch };
-      if (!(Number(fx.rate) > 0)) throw new ValidationError(['Kur 0’dan büyük olmalıdır.']);
-      state.settings = { ...state.settings, fx };
-      persist();
-      return fx;
-    },
-    /** Belirli bir tarihe kur yazar (geçmiş dönem raporları doğru kalsın diye). */
-    recordRate(date, rate) {
-      const fx = state.settings.fx;
-      state.settings = {
-        ...state.settings,
-        fx: { ...fx, rate, updatedAt: new Date().toISOString(), history: { ...fx.history, [date]: rate } },
-      };
-      persist();
-    },
+    /* --- Fiyat takvimi --- */
+    savePrice: (roomId, date, patch) => mutate(() => api.put(`/api/prices/${roomId}/${date}`, patch)),
+    clearPrice: (roomId, date) => mutate(() => api.put(`/api/prices/${roomId}/${date}`, { amount: 0 })),
+    bulkPriceEntries: (entries) => mutate(() => api.post('/api/prices/bulk', { entries })),
 
     /* --- Ayarlar --- */
-    saveSettings(patch) {
-      const settings = { ...state.settings, ...patch };
-      const errors = validateSettings(settings);
-      if (errors.length) throw new ValidationError(errors);
-      state.settings = settings;
-      persist();
-      return settings;
+    saveSettings: (patch) => mutate(() => api.put('/api/settings', patch)),
+    saveTaxRates: (tax) => mutate(() => api.put('/api/settings', { tax })),
+    saveBills: (bills) => mutate(() => api.put('/api/settings', { bills })),
+    saveCategory(patch) {
+      const list = state.settings.customCategories ?? [];
+      const index = list.findIndex((c) => c.key === patch.key);
+      const next = index >= 0 ? list.map((c) => (c.key === patch.key ? patch : c)) : [...list, patch];
+      return mutate(() => api.put('/api/settings', { customCategories: next }));
     },
+    deleteCategory(key) {
+      const next = (state.settings.customCategories ?? []).filter((c) => c.key !== key);
+      return mutate(() => api.put('/api/settings', { customCategories: next }));
+    },
+    setDisplayCurrency: (currency) => mutate(() => api.put('/api/settings', { displayCurrency: currency })),
+    saveFx: (patch) => mutate(() => api.put('/api/settings', { fx: { ...state.settings.fx, ...patch } })),
+    recordRate: (date, rate) => mutate(() => api.put('/api/settings', {
+      fx: {
+        ...state.settings.fx, rate, updatedAt: new Date().toISOString(),
+        history: { ...state.settings.fx.history, [date]: rate },
+      },
+    })),
 
-    reset({ withSeed = true } = {}) {
-      adapter.removeItem(STORAGE_KEY);
-      state = withSeed ? seedData() : emptyState();
-      persist();
-    },
+    /* --- Kullanıcılar (yalnızca Admin) --- */
+    saveUser: (patch) => mutate(() => api.post('/api/users', patch)),
+    deleteUser: (id) => mutate(() => api.del(`/api/users/${id}`)),
+    changeOwnPassword: (currentPassword, newPassword) =>
+      mutate(() => api.post('/api/auth/password', { currentPassword, newPassword })),
+
+    /** İlk kurulumda örnek veri yükler (yalnızca Admin). */
+    loadDemoData: () => mutate(() => api.post('/api/demo')),
+
+    /* --- Yedekleme --- */
     exportJSON: () => JSON.stringify(state, null, 2),
-    importJSON(json) {
-      const parsed = JSON.parse(json);
-      state = {
-        rooms: (parsed.rooms ?? []).map(createRoom),
-        reservations: (parsed.reservations ?? []).map(createReservation),
-        expenses: (parsed.expenses ?? []).map(createExpense),
-        prices: parsed.prices ?? {},
-        settings: mergeSettings(parsed.settings),
-      };
-      persist();
-      return state;
-    },
   };
-
-  return api;
 }
