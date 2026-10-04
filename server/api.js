@@ -6,14 +6,19 @@
  *  - Sunucu: her uç nokta kendi modül iznini doğrular; yetkisiz istek 403 döner.
  */
 
-import { createEmployee, createExtraWorker, createSupplier, createSupplierTxn, createCashDay,
-  defaultTaxRates, validateEmployee, validateExtraWorker, validateSupplier, validateSupplierTxn,
-  validateCashDay, validateTaxRates } from '../src/core/finance.js';
+import { createCashDay, createEmployee, createExtraWorker, createForeignWorker,
+  createRestaurantExpense, createRestaurantIncome, createSupplier, createSupplierTxn,
+  defaultTaxRates, validateCashDay, validateEmployee, validateExtraWorker, validateForeignWorker,
+  validateRestaurantExpense, validateRestaurantIncome, validateSupplier, validateSupplierTxn,
+  validateTaxRates } from '../src/core/finance.js';
 import { createExpense, createPriceEntry, createReservation, createRoom, defaultSettings,
   validateExpense, validatePriceEntry, validateReservation, validateRoom, validateSettings } from '../src/core/model.js';
 import { record } from './audit.js';
 import { allPermissions, can, MODULES, normalizePermissions } from './permissions.js';
 import { buildTemplate, exportWorkbook, parseWorkbook, TEMPLATES } from './excel.js';
+import { fetchRate, FX_PROVIDERS } from './fx.js';
+import { BACKUP_DIR, createBackup, deleteBackup, listBackups, pruneBackups, readBackup,
+  restoreBackup, snapshot, validateBackup } from './backup.js';
 import { cookieHeader, parseCookies, readBody, readJson, sendError, sendJson } from './http.js';
 import { createSession, destroySession, destroyUserSessions, findUser, hashPassword, newId,
   passwordProblems, publicUser, sameUser, SESSION_COOKIE, userForToken, verifyPassword } from './auth.js';
@@ -57,6 +62,9 @@ function visibleState(db, user) {
     suppliers: mask('toptancilar', db.suppliers, ['name', 'phone', 'taxNumber', 'note']),
     supplierTxns: mask('toptancilar', db.supplierTxns, ['invoiceNo', 'note']),
     cashDays: mask('kasa', db.cashDays, ['note', 'closedBy']),
+    restaurantIncomes: mask('restoranGelir', db.restaurantIncomes, ['note']),
+    restaurantExpenses: mask('restoranGider', db.restaurantExpenses, ['note']),
+    foreignWorkers: mask('yabanciCalisanlar', db.foreignWorkers, ['name', 'note']),
     users: user.isAdmin ? db.users.map(publicUser) : [],
     auditLog: user.isAdmin ? db.auditLog.slice(-300).reverse() : [],
     modules: MODULES,
@@ -120,6 +128,24 @@ const RESOURCES = {
     validate: (item, db) => validateSupplierTxn(item, { suppliers: db.suppliers }),
     label: 'Cari hareket', summary: (t) => `${t.type} ${t.invoiceNo || ''} ${t.amount}`,
     sort: (a, b) => b.date.localeCompare(a.date),
+  },
+  restaurantIncomes: {
+    permission: 'restoranGelir', factory: createRestaurantIncome,
+    validate: (item, db) => validateRestaurantIncome(item, { incomes: db.restaurantIncomes }),
+    label: 'Restoran geliri', summary: (i) => `${i.date} ${i.sequence}. gün sonu ${i.amount}`,
+    sort: (a, b) => b.date.localeCompare(a.date) || a.sequence - b.sequence,
+  },
+  restaurantExpenses: {
+    permission: 'restoranGider', factory: createRestaurantExpense,
+    validate: (item) => validateRestaurantExpense(item),
+    label: 'Restoran gideri', summary: (e) => `${e.category} ${e.amount}`,
+    sort: (a, b) => b.date.localeCompare(a.date),
+  },
+  foreignWorkers: {
+    permission: 'yabanciCalisanlar', factory: createForeignWorker,
+    validate: (item, db) => validateForeignWorker(item, { workers: db.foreignWorkers }),
+    label: 'Yabancı çalışan', summary: (w) => `${w.name} ${w.period}`,
+    sort: (a, b) => b.period.localeCompare(a.period) || a.name.localeCompare(b.name, 'tr'),
   },
   cashDays: {
     permission: 'kasa', factory: createCashDay,
@@ -200,7 +226,7 @@ route('GET', /^\/api\/state$/, async ({ res, user }) => {
 
 const resourceName = (path) => path.replace(/^\/api\//, '').split('/')[0];
 
-route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays)$/, async ({ req, res, user, path }) => {
+route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers)$/, async ({ req, res, user, path }) => {
   const name = resourceName(path);
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -222,7 +248,7 @@ route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppl
   sendJson(res, 200, saved);
 });
 
-route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays)\/([\w-]+)$/, async ({ res, user, match }) => {
+route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers)\/([\w-]+)$/, async ({ res, user, match }) => {
   const [, name, id] = match;
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -415,6 +441,144 @@ route('DELETE', /^\/api\/users\/([\w-]+)$/, async ({ res, user, match }) => {
   sendJson(res, 200, { ok: true });
 });
 
+/* --- yedekleme ve geri yükleme (admin) --- */
+
+const requireBackupAccess = (user) => {
+  requireAdmin(user);
+  requirePermission(user, 'yedekleme');
+};
+
+route('GET', /^\/api\/backups$/, async ({ res, user }) => {
+  requireBackupAccess(user);
+  const db = await load();
+  sendJson(res, 200, {
+    directory: BACKUP_DIR,
+    settings: db.settings?.backup ?? { autoEnabled: true, intervalHours: 24, keep: 20 },
+    backups: await listBackups(),
+  });
+});
+
+route('POST', /^\/api\/backups$/, async ({ req, res, user }) => {
+  requireBackupAccess(user);
+  const { reason = 'manuel' } = await readJson(req).catch(() => ({}));
+  const info = await createBackup({ reason, user });
+  const db = await load();
+  await pruneBackups(db.settings?.backup?.keep ?? 20);
+  await update((current) => record(current, {
+    user, action: 'backup', entity: 'backup', entityId: info.name,
+    summary: `Yedek oluşturuldu: ${info.name}`,
+  }));
+  sendJson(res, 200, info);
+});
+
+route('GET', /^\/api\/backups\/download$/, async ({ res, user, query }) => {
+  requireBackupAccess(user);
+  const name = query.get('name');
+  // İsim verilmezse anlık yedek indirilir.
+  const payload = name ? await readBackup(name) : snapshot(await load());
+  const body = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-disposition': `attachment; filename="${name || `otel-yedek-${new Date().toISOString().slice(0, 10)}.json`}"`,
+    'content-length': body.length,
+  });
+  res.end(body);
+});
+
+route('DELETE', /^\/api\/backups\/([\w.\-]+)$/, async ({ res, user, match }) => {
+  requireBackupAccess(user);
+  await deleteBackup(decodeURIComponent(match[1]));
+  await update((db) => record(db, {
+    user, action: 'delete', entity: 'backup', entityId: match[1], summary: `Yedek silindi: ${match[1]}`,
+  }));
+  sendJson(res, 200, { ok: true });
+});
+
+route('POST', /^\/api\/backups\/restore$/, async ({ req, res, user }) => {
+  requireBackupAccess(user);
+  const { name, payload, keepUsers = false, dryRun = false } = await readJson(req);
+  const backup = name ? await readBackup(name) : payload;
+  if (!backup) throw badRequest('Geri yüklenecek yedek belirtilmedi.');
+
+  const errors = validateBackup(backup);
+  if (dryRun) {
+    sendJson(res, 200, {
+      dryRun: true, valid: errors.length === 0, errors,
+      counts: backup.counts ?? null, createdAt: backup.createdAt ?? null, version: backup.version ?? null,
+    });
+    return;
+  }
+  if (errors.length) throw invalid(errors);
+
+  const result = await restoreBackup(backup, { keepUsers, user });
+  await update((db) => record(db, {
+    user, action: 'restore', entity: 'backup', entityId: name ?? 'yuklenen-dosya',
+    summary: `Yedekten geri yüklendi (${name ?? 'dosya'}) · güvenlik yedeği: ${result.safety.name}`,
+  }));
+  sendJson(res, 200, result);
+});
+
+route('PUT', /^\/api\/backups\/settings$/, async ({ req, res, user }) => {
+  requireBackupAccess(user);
+  const patch = await readJson(req);
+  const saved = await update((db) => {
+    const backup = {
+      autoEnabled: patch.autoEnabled !== false,
+      intervalHours: Math.min(168, Math.max(1, Number(patch.intervalHours) || 24)),
+      keep: Math.min(200, Math.max(1, Number(patch.keep) || 20)),
+    };
+    db.settings = { ...db.settings, backup };
+    record(db, { user, action: 'update', entity: 'backup', summary: 'Yedekleme ayarları güncellendi' });
+    return backup;
+  });
+  applyAutoBackup(saved);
+  sendJson(res, 200, saved);
+});
+
+/** Otomatik yedekleme zamanlayıcısını ayarlara göre kurar. */
+let applyAutoBackup = () => {};
+export const setAutoBackupApplier = (fn) => { applyAutoBackup = fn; };
+
+/* --- döviz kuru (PRD v2 §4.1) --- */
+
+route('GET', /^\/api\/fx\/providers$/, async ({ res }) => {
+  sendJson(res, 200, FX_PROVIDERS.map((p) => ({ key: p.key, label: p.label })));
+});
+
+route('POST', /^\/api\/fx\/refresh$/, async ({ req, res, user }) => {
+  requirePermission(user, 'ayarlar');
+  const { currency = 'EUR', source } = await readJson(req).catch(() => ({}));
+  const db = await load();
+  const preferred = source || db.settings?.fx?.source || 'tcmb';
+
+  let result;
+  try {
+    result = await fetchRate({ currency, preferred });
+  } catch (err) {
+    // Başarısız güncellemede mevcut kur korunur.
+    throw new ApiError(502, err.message, { attempts: err.attempts ?? [], keptRate: db.settings?.fx?.rate ?? null });
+  }
+
+  const saved = await update((current) => {
+    const fx = { ...(current.settings.fx ?? {}) };
+    fx.rate = result.rate;
+    fx.source = preferred;
+    fx.provider = result.provider;
+    fx.providerLabel = result.providerLabel;
+    fx.sourceDate = result.sourceDate;
+    fx.updatedAt = result.fetchedAt;
+    fx.lastError = '';
+    fx.history = { ...(fx.history ?? {}), [new Date().toISOString().slice(0, 10)]: result.rate };
+    current.settings = { ...current.settings, fx };
+    record(current, {
+      user, action: 'update', entity: 'fx',
+      summary: `Kur güncellendi: 1 ${currency} = ${result.rate} TRY (${result.providerLabel})`,
+    });
+    return fx;
+  });
+  sendJson(res, 200, saved);
+});
+
 /* --- demo verisi (ilk kurulum kolaylığı) --- */
 
 route('POST', /^\/api\/demo$/, async ({ res, user }) => {
@@ -433,6 +597,9 @@ route('POST', /^\/api\/demo$/, async ({ res, user }) => {
     db.suppliers = [];
     db.supplierTxns = [];
     db.cashDays = [];
+    db.restaurantIncomes = [];
+    db.restaurantExpenses = [];
+    db.foreignWorkers = [];
     record(db, { user, action: 'import', entity: 'demo', summary: 'Demo verisi yüklendi; finansal kayıtlar sıfırlandı (kullanıcılar korundu)' });
     return { rooms: db.rooms.length, reservations: db.reservations.length, expenses: db.expenses.length };
   });

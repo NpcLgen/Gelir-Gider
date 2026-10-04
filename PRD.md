@@ -1,8 +1,9 @@
 # Otel Finans ve Yönetim Sistemi
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
-**Sürüm:** 1.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 106 birim/API testi (`npm test`) + 55 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Sürüm:** 2.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
+**Doğrulama:** 133 birim/API testi (`npm test`) + 80 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Sürüm 2.0 teslim listesi:** 18/18 madde tamamlandı — bkz. [§12](#12-sürüm-20-teslim-listesi-1818).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
 ---
@@ -330,11 +331,12 @@ harf ve bir rakam.
 
 ```
 ▾ GENEL      → Dashboard · Gelirler · Fiyat Girişi · Oda Ayarları
-▾ GİDERLER   → Giderler · Genel Harcamalar · Çalışanlar · Ekstra Çalışan · Vergiler
-▾ RESTORAN   → Toptancılar
+▾ GİDERLER   → Giderler · Genel Harcamalar · Çalışanlar · Ekstra Çalışan ·
+               Yabancı Çalışanlar · Vergiler
+▾ RESTORAN   → Restoran Gelirleri · Ekstra Giderler · Toptancılar
 ▾ KASA       → Gün Sonu / Kasa
 ▾ RAPORLAR   → Finansal Raporlar · Excel İşlemleri
-▾ YÖNETİM    → Kullanıcı ve Yetki · Ayarlar
+▾ YÖNETİM    → Kullanıcı ve Yetki · Yedekleme · Ayarlar
 ```
 
 * Menü, Admin'in verdiği yetkilere göre **dinamik** oluşturulur: yetkisi olmayan girdi
@@ -357,9 +359,12 @@ scripts/serve.js      → tek komutla statik dosya + API sunucusu
 server/
   db.js               → dosya tabanlı depo, atomik yazma, sıralı güncelleme
   auth.js             → PBKDF2 şifre saklama, oturum, varsayılan Admin
-  permissions.js      → 18 modül, yetki kontrolü
-  api.js              → kimlik, CRUD, fiyat, ayarlar, faturalar, kullanıcılar, Excel
+  permissions.js      → 22 modül, yetki kontrolü
+  api.js              → kimlik, CRUD, fiyat, ayarlar, faturalar, kullanıcılar, Excel,
+                        yedekleme, döviz kuru
   excel.js            → bağımlılıksız XLSX okuma/yazma (node:zlib), şablonlar
+  fx.js               → döviz kuru servisi (TCMB / ECB), çoklu kaynak ve yedekleme
+  backup.js           → yedek alma, listeleme, doğrulama, geri yükleme, otomatik yedek
   audit.js            → denetim kaydı
 src/core/             → tarayıcı ve sunucunun paylaştığı saf mantık
   finance.js          → personel, toptancı cari, kasa, vergi hesapları
@@ -377,6 +382,353 @@ data/db.json          → veritabanı (sürüm kontrolüne dahil değildir)
    (komisyon oranı alanı hazır).
 2. **Faz 2 — İlişkisel veritabanı:** `data/db.json` yerine ACID garantili ilişkisel veritabanı.
    Mevcut veri modeli bu geçişe uygun normalize edilmiştir.
-3. **Faz 2 — TCMB kur proxy'si:** Tarayıcıdan doğrudan çekimi CORS engellediğinden sunucu
-   tarafı kur servisi.
+3. ~~**Faz 2 — TCMB kur proxy'si**~~ → **Sürüm 2.0'da tamamlandı** (`server/fx.js`).
 4. **Faz 3 — Muhasebe entegrasyonu:** Mali müşavire doğrudan aktarım (Excel/CSV/PDF hazır).
+5. **Faz 3 — PWA kurulumu:** Telefona "uygulama olarak ekle" için manifest ve servis
+   çalışanı (arayüz bugün de telefon/tablet uyumludur, bkz. §14).
+
+---
+
+# Sürüm 2.0 — Güncellenmiş Gereksinimler
+
+## 12. Sürüm 2.0 Teslim Listesi (18/18)
+
+| # | Madde | Durum | Doğrulayan test |
+| --- | --- | --- | --- |
+| 1 | Login ekranında şifre göster/gizle düğmesi çalışıyor | ✅ | `§1.1 Şifre göster/gizle düğmesi değeri koruyarak çalışır` |
+| 2 | Yeni kullanıcıyla kategori geçişleri sorunsuz çalışıyor | ✅ | `§1.2 Çıkış–giriş sonrası menüde gezinme çalışır` |
+| 3 | Giriş sonrasında Dashboard açılıyor | ✅ | `§1.3 Giriş sonrası Dashboard açılır` |
+| 4 | Aynı anda yalnızca bir ana menü kategorisi açık kalıyor | ✅ | `§1.3 Aynı anda yalnızca bir menü kategorisi açık kalır` |
+| 5 | Tarih seçici tasarımı ve filtreleri düzgün çalışıyor | ✅ | `§1.4 Hızlı dönem filtreleri eksiksiz ve çalışıyor` |
+| 6 | Restoran gelir paneli oluşturuldu | ✅ | `§2.3 Bir güne iki gün sonu girilir ve toplanır` |
+| 7 | Restoran gelirleri genel gelire dahil ediliyor | ✅ | `§2.1 Restoran geliri genel gelire ekleniyor` |
+| 8 | Restoran yiyecek-içecek KDV oranı %10 olarak tanımlandı | ✅ | `restoran KDV’si %10 iç yüzde ile hesaplanır` |
+| 9 | Aynı gün için en fazla iki gün sonu kaydı oluşturulabiliyor | ✅ | `bir güne en fazla iki gün sonu kaydı girilebilir` |
+| 10 | Gün sonları günlük ve aylık olarak doğru toplanıyor | ✅ | `aynı günün iki gün sonu kaydı toplanır (12.500 + 8.750 = 21.250)` |
+| 11 | Restoran Ekstra Giderler kategorisi çalışıyor | ✅ | `§2.4 Restoran ekstra gideri tedarikçi carisine dokunmadan eklenir` |
+| 12 | Yabancı çalışanlar giderlere eklenebiliyor | ✅ | `§3.1 Giderler özetinde yabancı çalışan kalemi görünür` |
+| 13 | Yabancı çalışan maaşları vergi matrahından ayrı tutuluyor | ✅ | `yabancı çalışan maaşı gider olur ama vergi matrahından indirilmez` |
+| 14 | Döviz kuru otomatik ve manuel güncelleniyor | ✅ | `§4.1 Başarılı güncelleme kuru ve kaynağı yazar` |
+| 15 | Ayarlar arayüzü yeniden düzenlendi | ✅ | `§5.1 Ayarlar kategorilere ayrıldı` |
+| 16 | Fiyat girilmemiş odalarda fiyat ve maliyet bilgileri gösteriliyor | ✅ | `§6.1 Boş fiyat hücresinde tavsiye ve maliyet balonu açılır` |
+| 17 | Appserv uyumluluk sorunu incelendi ve kök nedeni belirlendi | ✅ | §15 (teknik inceleme) |
+| 18 | Yeni özellikler mevcut finansal raporlarla uyumlu çalışıyor | ✅ | `§3.1 Yabancı çalışan gideri eklenir, matrahtan indirilmez` + 133 birim testi |
+
+---
+
+## 13. Sürüm 2.0 Gereksinimleri — Uygulama Notları
+
+### 13.1. Şifre Göster/Gizle (v2 §1.1) ✅
+
+`src/ui/dom.js` içindeki `passwordField()` yardımcısı tüm şifre alanlarını `.pw-wrap`
+kutusuna sarar ve sağ tarafa göz düğmesi (`.pw-toggle`) koyar.
+
+* Düğme `input.type` değerini `password` ↔ `text` arasında çevirir; **değer kaybolmaz**.
+* `aria-pressed` ve başlık metni görünürlük durumuyla birlikte güncellenir.
+* Varsayılan gizlidir ve giriş doğrulamasına dokunmaz (sunucuya giden istek değişmez).
+* Giriş ekranı, zorunlu şifre değişimi ve kullanıcı yönetimi formlarının tamamında kullanılır.
+
+### 13.2. Kategori Geçiş Hatası (v2 §1.2) ✅ — kök neden
+
+**Bulgu:** Hata yeni kullanıcıya özgü değildi; **aynı sekmede çıkış yapıp yeniden giriş
+yapıldığında** ortaya çıkıyordu. Uygulama her girişte yeni bir arayüz oturumu kuruyor ama
+önceki oturumun `hashchange` dinleyicisi DOM'dan kaldırılmıyordu. Eski dinleyici, artık
+geçersiz olan eski yetki listesine bakıp adresi geri alıyor ve
+"Bu sayfa için yetkiniz bulunmuyor" bildirimi veriyordu; sonuç olarak sayfa değişmiyordu.
+
+**Çözüm:** `src/ui/app.js` içinde her oturum bir `AbortController` ile kapsanır:
+
+```js
+let activeSession = null;
+function endActiveSession() { activeSession?.abort(); activeSession = null; }
+// startApp içinde:
+endActiveSession();
+const session = new AbortController();
+activeSession = session;
+window.addEventListener('hashchange', handler, { signal: session.signal });
+```
+
+Çıkışta `endActiveSession()` çağrılır; eski dinleyiciler tarayıcı tarafından otomatik
+kaldırılır. Sayfa yenileme, geri/ileri ve adres çubuğundan gezinme doğru çalışır;
+yetkisiz sayfa erişimi hem arayüzde hem API'de engellenmeye devam eder.
+
+### 13.3. Dashboard Açılışı ve Akordiyon Menü (v2 §1.3) ✅
+
+* Giriş sonrası varsayılan sayfa `panel` (Dashboard); yetkisi yoksa ilk erişilebilir sayfa açılır.
+* Menüde **aynı anda yalnızca bir ana kategori** açık kalır (`toggleGroup` diğerlerini kapatır).
+* Açık grup `localStorage`'da saklanır; kullanıcı tüm grupları kapatmışsa bu tercih de korunur.
+* Kapalı bir gruptaki sayfaya gidildiğinde grup otomatik açılır; aktif sayfa kapalı bir
+  gruptaysa başlıkta nokta işaretiyle belirtilir.
+
+### 13.4. Tarih ve Dönem Seçici (v2 §1.4) ✅
+
+Hızlı filtreler: **Bugün · Bu Hafta · Bu Ay · Geçen Ay · Bu Çeyrek · Bu Yıl · YTD ·
+Geçen Yılın Aynı Ayı**, ayrıca `📆 Özel Aralık` ile serbest başlangıç/bitiş tarihi.
+Ay ileri/geri okları ve ay seçici ayrı durur. Telefonda düğmeler tek sırada yatay kaydırılır.
+Başlangıç tarihi bitiş tarihinden ileri olamaz; seçim tüm rapor, tablo ve KPI'lara uygulanır.
+
+### 13.5. Restoran Geliri ve Gün Sonu (v2 §2.1, §2.3) ✅
+
+`Restoran → Restoran Gelirleri` sayfası gün sonu kayıtlarını tablo olarak gösterir:
+*Tarih · 1. Gün Sonu · 2. Gün Sonu · Günlük Toplam · KDV · Açıklama*.
+
+| Kural | Uygulama |
+| --- | --- |
+| Günde en fazla 2 gün sonu | `MAX_DAY_END_PER_DAY = 2`; 3. kayıt doğrulamada reddedilir |
+| Aynı sıra numarası tekrar edemez | `validateRestaurantIncome` aynı gün + aynı sıra kaydını engeller |
+| Aynı günün kayıtları toplanır | `restaurantDayTotal` → 12.500 + 8.750 = **21.250** |
+| İptal edilen kayıt hesaba girmez | `active: false` kaydı toplama ve sınıra dahil edilmez |
+| Çift sayım olmaz | Restoran geliri yalnızca gün sonu kaydından üretilir; ayrı manuel gelir girişi yoktur |
+
+Gelir Dashboard'da `Toplam Gelir` kartına **"Oda ₺… + restoran ₺…"** açıklamasıyla eklenir,
+finansal raporlarda ve yazdırma seçeneklerinde ayrı bölüm olarak yer alır.
+
+### 13.6. Restoran KDV Oranı (v2 §2.2) ✅
+
+* `Ayarlar → Vergi ve Finans` altında **Restoran KDV Oranı** parametresi; varsayılan **%10**.
+* Konaklama KDV'sinden bağımsızdır; biri değişince diğeri etkilenmez.
+* Tutar KDV **dahil** veya **hariç** girilebilir; hariç girilirse brüt tutar hesaplanır.
+* KDV iç yüzdeyle bulunur: `KDV = tutar × oran / (100 + oran)`.
+* Vergi raporunda `KDV (konaklama)`, `KDV (restoran)` ve `KDV (hesaplanan toplam)` satırları ayrıdır.
+* Konaklama vergisi ve turizm payı yalnızca **oda** gelirinden alınır.
+
+### 13.7. Restoran Ekstra Giderleri (v2 §2.4) ✅
+
+`Restoran → Ekstra Giderler`: tarih, kategori (Ekipman, Mutfak Sarf, Tamirat, Temizlik,
+Operasyonel, Diğer), tutar, açıklama ve isteğe bağlı ödeme yöntemi.
+Kayıtta tedarikçi alanı **yoktur**; toptancı borç/bakiye hesaplarını etkilemez.
+Giderler özetine, kârlılık ve vergi raporlarına dahil edilir.
+
+### 13.8. Yabancı Çalışanlar (v2 §3.1) ✅
+
+`Giderler → Yabancı Çalışanlar`: ad, dönem (ay), maaş tutarı, ödeme tarihi, açıklama.
+
+* Maaşlar **gider toplamına ve kârlılık raporuna** dahil edilir.
+* Vergi raporunda `İndirilemeyen Gider (matraha eklenen)` satırı olarak ayrı gösterilir.
+* Vergi matrahı: `taxBase = netKâr + indirilemeyen giderler` → gelir vergisi bu matrah üzerinden.
+* Sınıflandırma sabit değildir: `Ayarlar → Vergi ve Finans → "Yabancı çalışan maaşları
+  vergi matrahından indirilebilir sayılsın"` kutusu açılırsa maaşlar indirilebilir sayılır.
+* Aynı ad + aynı dönem iki kez kaydedilemez.
+
+> Mali müşavir teyidi gereklidir; sistem her iki yorumu da parametreyle destekler.
+
+### 13.9. Döviz Kuru Entegrasyonu (v2 §4.1) ✅ — kök neden
+
+**Bulgu:** Kur tarayıcıdan doğrudan TCMB'ye istenmişti; TCMB `Access-Control-Allow-Origin`
+başlığı döndürmediği için **CORS** isteği engelliyor, bu yüzden hem otomatik hem manuel
+güncelleme sessizce başarısız oluyordu.
+
+**Çözüm:** Kur çekimi sunucuya taşındı (`server/fx.js`, `POST /api/fx/refresh`).
+
+| Kaynak | Alan |
+| --- | --- |
+| TCMB Efektif Satış (varsayılan) | `BanknoteSelling` |
+| TCMB Döviz Alış | `ForexBuying` |
+| Frankfurter (ECB) | JSON `rates.TRY` |
+| Sabit Kur | yalnızca manuel giriş |
+
+* Seçilen kaynak önce denenir; başarısız olursa diğerleri sırayla denenir (12 sn zaman aşımı).
+* Başarıda kur, **kaynak adı**, kaynak tarihi ve güncelleme zamanı yazılır; geçmiş kurlar
+  tarih bazında saklanır ve tabloda listelenir.
+* Başarısızlıkta **mevcut kur korunur**, hata mesajı hangi kaynakların neden başarısız
+  olduğunu belirtir ve kur kartında uyarı olarak gösterilir.
+
+### 13.10. Ayarların Yeniden Tasarımı (v2 §5.1) ✅
+
+Ayarlar beş sekmeye ayrıldı: **Genel Ayarlar · Vergi ve Finans · Döviz Kuru ·
+Kullanıcı ve Güvenlik · Görünüm ve Arayüz**.
+Her kart kısa açıklama metni taşır; `Kaydet` / `İptal` düğmeleri başlıkta sabittir;
+kaydedilmemiş değişiklik varsa `● Kaydedilmemiş değişiklik` rozeti görünür ve sekme
+değişiminde kullanıcı uyarılır. Ayarlar yalnızca `ayarlar` modülü yetkisi olan kullanıcıya
+açıktır; yetkisiz istek API'de 403 döner.
+
+### 13.11. Fiyat İpucu Balonu (v2 §6.1) ✅
+
+Fiyat Girişi takviminde **fiyatı girilmemiş** bir hücrenin üzerine gelindiğinde (veya
+dokunulduğunda / klavyeyle odaklanıldığında) bilgi balonu açılır:
+
+* **Tavsiye Edilen Satış Fiyatı** — yeşil
+* **Ortalama Oda Maliyeti** — kırmızı
+
+Değerler ilgili odanın **seçili döneme ait** maliyet dağıtımından üretilir; veri yoksa
+balon hiç açılmaz (tahmini rakam gösterilmez). Fiyatı girilmiş hücrelerde balon çıkmaz,
+mevcut fiyat korunur. Balon ekran dışına taşmayacak şekilde konumlandırılır.
+
+---
+
+## 14. Yedekleme, Geri Yükleme ve Cihaz Uyumu
+
+### 14.1. Yedekleme ve Geri Yükleme ✅
+
+`Yönetim → Yedekleme` (admin / `yedekleme` modülü yetkisi):
+
+| İşlem | Açıklama |
+| --- | --- |
+| ⬇️ Anlık Yedeği İndir | Tüm verinin JSON yedeğini bilgisayara indirir |
+| 💾 Şimdi Yedek Al | Sunucuda zaman damgalı yedek dosyası oluşturur |
+| 📂 Yedek Dosyası Seç | Bilgisayardaki bir yedeği doğrulayıp geri yükler |
+| Geri Yükle | Sunucudaki yedeklerden birini geri yükler |
+| 🗑️ Sil | Eski yedeği siler |
+
+* Yedek **tüm koleksiyonları** içerir (kullanıcılar dâhil; şifreler hash'li saklanır).
+* Geri yüklemeden **önce otomatik güvenlik yedeği** alınır (`…-geri-yukleme-oncesi.json`),
+  böylece yanlış yedek seçilse bile geri dönülebilir.
+* Geri yükleme öncesi dosya doğrulanır (biçim, eksik bölüm, şema sürümü, boş kullanıcı listesi)
+  ve içerik özeti (kaç oda, kaç rezervasyon…) kullanıcıya gösterilir.
+* `Mevcut kullanıcı hesaplarını koru` seçeneğiyle hesaplar korunarak yalnızca veri geri yüklenebilir.
+* Tüm yedek/geri yükleme işlemleri denetim kaydına kullanıcı ve tarihle yazılır.
+
+**Otomatik yedekleme ve farklı bilgisayarlardan erişim.** Sunucu açılışta ve belirlenen
+aralıkta (varsayılan 24 saat) otomatik yedek alır; `keep` sayısını aşan eski yedekler silinir.
+Yedek klasörü `BACKUP_DIR` ortam değişkeniyle değiştirilebilir — bir **ağ sürücüsüne** veya
+**bulut eşitleme klasörüne** (OneDrive, Google Drive, Dropbox, NAS) işaret ettirildiğinde
+yedekler diğer bilgisayarlardan da erişilebilir olur. Yedekleme sayfası geçerli klasör yolunu
+ve örnek komutları gösterir:
+
+```bat
+:: Windows (OneDrive'a yedekle)
+set BACKUP_DIR=C:\Users\<kullanici>\OneDrive\OtelYedek
+npm start
+```
+
+```bash
+# macOS / Linux (ağ sürücüsüne yedekle)
+BACKUP_DIR=/Volumes/NAS/otel-yedek npm start
+```
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| Y1 | Yedek alınır, listelenir, içerik eksiksizdir | `yedek alınır, listelenir ve içeriği eksiksizdir` |
+| Y2 | Bozuk/eksik yedek reddedilir | `geçersiz yedek dosyası reddedilir` |
+| Y3 | Dosya adı doğrulanır (dizin dışına çıkılamaz) | `yedek dosya adı doğrulanır` |
+| Y4 | Geri yükleme veriyi döndürür, güvenlik yedeği alır | `geri yükleme verileri yedekteki haline döndürür` |
+| Y5 | Kullanıcılar korunabilir | `kullanıcıları koru seçeneği mevcut hesapları bırakır` |
+| Y6 | Eski yedekler budanır | `eski yedekler budanır, en yeniler kalır` |
+| Y7 | Arayüzden uçtan uca çalışır | tarayıcı: `Yedekleme sayfası yedek alır ve listeler`, `Geri yükleme önizlemesi ve uygulaması çalışır` |
+
+### 14.2. Tarayıcı, Mobil ve Tablet Uyumu ✅
+
+Arayüz üç kırılma noktasıyla tasarlandı:
+
+| Genişlik | Davranış |
+| --- | --- |
+| > 1100px | Masaüstü: sabit kenar menüsü, çok sütunlu kartlar |
+| ≤ 1100px (tablet) | Menü daralır, geniş tablolar kart içinde yatay kaydırılır, oda kartları tek sütun |
+| ≤ 820px (telefon) | Menü yan panele (off-canvas) dönüşür, ☰ düğmesi ve arka perde eklenir; KPI'lar 2 sütun; pencereler alt sayfa (bottom-sheet) olur; dönem düğmeleri tek sırada kaydırılır |
+| `pointer: coarse` | Dokunmatik cihazlarda düğme ve hücreler büyütülür; fare üzerine gelme gerektiren bilgiler dokunmayla açılır |
+
+Sayfalar telefon genişliğinde **yatay kaymaz**; yalnızca veri tabloları kendi kartı
+içinde kaydırılır. Hızlı ekle (＋) menüsü dokunmatik cihazda düğmeye basınca açılır.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| R1 | Tablet genişliğinde yatay taşma yok | tarayıcı: `Tablet genişliğinde içerik yatay taşmıyor` |
+| R2 | Telefonda menü yan panel olur, perdeyle kapanır | tarayıcı: `Telefon genişliğinde menü yan panele dönüşür` |
+| R3 | Telefonda sayfalar yatay kaymaz | tarayıcı: `Telefon genişliğinde sayfalar yatay kaymıyor` |
+
+### 14.3. Yazdırma Panelindeki Metin Taşması ✅ — kök neden
+
+**Bulgu:** Genel CSS kuralı `input, select, textarea { width: 100% }` onay kutularını da
+kapsıyordu. Yazdırma seçenekleri esnek kutu (flex) olduğundan onay kutusu satırın tamamını
+kaplıyor, etiket yazısına **0 piksel** kalıyor ve metin harf harf dikey bir şeride
+sıkışıyordu.
+
+**Çözüm:** `input[type="checkbox"], input[type="radio"] { width: auto; flex: none; }`
+kuralı eklendi; etiket kalan alanı alır (`flex: 1 1 auto; min-width: 0`) ve uzun başlıklar
+satır sonunda düzgün kırılır. Seçenek ızgarası dar ekranda tek sütuna iner.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| P1 | Seçenek yazıları kutusuna sığar | tarayıcı: `Yazdırma panelindeki seçenek yazıları taşmıyor` |
+
+---
+
+## 15. Appserv Üzerinde Çalıştırma — Teknik İnceleme (v2 §7) ✅
+
+### 15.1. Kök neden
+
+**Bu uygulama PHP değildir.** Saf **Node.js** (v20+) ile yazılmıştır: `scripts/serve.js`
+hem statik dosyaları sunar hem de `/api/*` uç noktalarını karşılar. Veriler MySQL'de değil,
+sunucudaki `data/db.json` dosyasında tutulur.
+
+AppServ; **Apache + PHP + MySQL + phpMyAdmin** paketidir ve **Node.js çalışma ortamı içermez.**
+Bu nedenle:
+
+| Olası sebep (PRD v2 §7 listesi) | Bu uygulamadaki durum |
+| --- | --- |
+| 1. Teknoloji uyumsuzluğu | **Kök neden budur.** Apache, `.js` dosyasını çalıştıramaz; yalnızca metin olarak sunar |
+| 2. PHP sürüm uyumsuzluğu | İlgisiz — projede hiç PHP dosyası yoktur |
+| 3. MySQL bağlantısı | İlgisiz — veritabanı yoktur, veri `data/db.json` dosyasındadır |
+| 4. Apache yapılandırması | Yalnızca ters proxy kurulacaksa önemlidir (§15.3) |
+| 5. Ortam değişkenleri | `PORT`, `DATA_DIR`, `BACKUP_DIR` isteğe bağlıdır; zorunlu değişken yoktur |
+| 6. Dosya izinleri | Node sürecinin `data/` klasörüne yazma izni olmalıdır |
+| 7. API / URL sorunları | Dosyalar `C:\AppServ\www` altına kopyalandığında Apache `index.html`'i sunar ama `/api/*` isteklerine **404** döner; ekranda veri gelmez |
+
+### 15.2. Önerilen çözüm — doğrudan Node.js ile çalıştırma
+
+```bat
+:: 1) Node.js LTS kurulu olmalı (https://nodejs.org) — sürüm kontrolü:
+node -v
+
+:: 2) Proje klasörüne gidin ve başlatın:
+cd C:\otel\Gelir-Gider
+npm start
+```
+
+Ekranda yazan adresi (varsayılan `http://127.0.0.1:5173`) tarayıcıda açın. Port doluysa
+sunucu bir sonraki boş portu seçer ve kullandığı adresi yazar. AppServ'in Apache'si (80) ve
+MySQL'i (3306) ile port çakışması yoktur; AppServ'in çalışıyor olması sorun değildir.
+
+**Sürekli çalışması için (Windows hizmeti):** `nssm install OtelFinans "C:\Program Files\nodejs\node.exe" "C:\otel\Gelir-Gider\scripts\serve.js"`
+veya Görev Zamanlayıcı'da "bilgisayar açılışında çalıştır" görevi tanımlayın.
+
+### 15.3. AppServ'i korumak isterseniz — ters proxy
+
+Apache'yi 80 portunda bırakıp isteği Node'a yönlendirebilirsiniz:
+
+```apache
+# httpd.conf içinde modülleri açın
+LoadModule proxy_module modules/mod_proxy.so
+LoadModule proxy_http_module modules/mod_proxy_http.so
+
+ProxyPreserveHost On
+ProxyPass        /otel/ http://127.0.0.1:5173/
+ProxyPassReverse /otel/ http://127.0.0.1:5173/
+```
+
+Node sunucusu yine ayrıca çalışıyor olmalıdır; Apache yalnızca isteği iletir.
+Oturum çerezi `httpOnly` ve `SameSite=Lax` olduğundan proxy arkasında da çalışır.
+
+### 15.4. Ağdaki diğer bilgisayarlardan erişim
+
+`npm start` sunucuyu tüm ağ arayüzlerinde dinletir. Aynı ağdaki telefon/tablet veya başka
+bir bilgisayardan `http://<sunucu-ip>:5173` adresiyle girilebilir. Windows Güvenlik
+Duvarı'nda ilgili porta izin verilmesi gerekir:
+
+```bat
+netsh advfirewall firewall add rule name="Otel Finans" dir=in action=allow protocol=TCP localport=5173
+```
+
+### 15.5. Kabul kriterleri
+
+| # | Kriter | Durum |
+| --- | --- | --- |
+| A1 | Çalışmama sebebi teknik olarak tespit edildi | ✅ §15.1 — AppServ'de Node.js çalışma ortamı yok |
+| A2 | Kaynak ve çözüm belgelendi | ✅ §15.2–§15.4 |
+| A3 | Uygun ortamda sistem başarıyla çalışıyor | ✅ `npm start` + 80 adımlı tarayıcı akış testi |
+| A4 | Login, sayfa geçişleri, API ve veri işlemleri test edildi | ✅ `npm test` (133 test) + `npm run test:browser` |
+
+---
+
+## 16. Sürüm 2.0 Genel Kuralları (v2 §8) ✅
+
+| Kural | Uygulama |
+| --- | --- |
+| Yeni gelir/gider kategorileri Dashboard'a dahil | Restoran geliri `Toplam Gelir`e, restoran ve yabancı çalışan giderleri `Toplam Gider`e girer |
+| Tüm finansal kayıtlar tarih bazında | Her kayıtta `date` / `period` alanı zorunludur |
+| Gün sonu kayıtları çift sayım oluşturmaz | Restoran geliri tek kaynaktan (gün sonu) üretilir |
+| Vergi oranları yönetilebilir parametre | 6 oran + indirilebilirlik anahtarı Ayarlar'dan düzenlenir |
+| Kritik kayıtlar silinmek yerine pasife alınır | `active: false` (gider, restoran geliri, çalışan kayıtları) |
+| Kritik işlemler kullanıcı ve tarihle kaydedilir | `server/audit.js` — Kullanıcı ve Yetki sayfasında listelenir |
+| Yetkiler hem arayüzde hem API'de | 22 modül; menü filtrelenir, her uç nokta ayrıca 403 döner |
+| Masaüstü ve mobil kullanım | §14.2 — tablet ve telefon kırılma noktaları |

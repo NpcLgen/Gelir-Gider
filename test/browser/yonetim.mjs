@@ -10,6 +10,7 @@
  */
 
 import { chromium } from 'playwright';
+import { makeGo } from './nav.mjs';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173/';
 const ADMIN = { user: process.env.TEST_USER || 'Admin', pass: process.env.TEST_PASS || 'Admin2026' };
@@ -39,7 +40,7 @@ const step = async (name, fn) => {
 };
 
 // Menü etiketleri emoji ile başlar; sondan eşleştirmek "Ayarlar"ı "Oda Ayarları"ndan ayırır.
-const go = (label) => page.locator('.nav-item').filter({ hasText: new RegExp(`${label}$`) }).first().click();
+const go = makeGo(page);
 const clearToast = () => page.evaluate(() => document.querySelector('.toast')?.classList.remove('show'));
 const waitForToast = (fragment) => page.waitForFunction(
   (text) => { const el = document.querySelector('.toast.show'); return Boolean(el && el.textContent.includes(text)); },
@@ -180,7 +181,7 @@ await step('Vergi raporu KDV, konaklama vergisi ve turizm payını ayrı göster
   await go('Vergiler');
   await page.waitForSelector('.card:has-text("Vergi Kalemleri")');
   const table = await page.textContent('.card:has-text("Vergi Kalemleri")');
-  for (const kalem of ['KDV (hesaplanan)', 'KDV (indirilecek)', 'Konaklama Vergisi', 'Turizm Payı', 'Gelir / Kurumlar Vergisi']) {
+  for (const kalem of ['KDV (konaklama)', 'KDV (restoran)', 'KDV (hesaplanan toplam)', 'KDV (indirilecek)', 'Konaklama Vergisi', 'Turizm Payı', 'Gelir / Kurumlar Vergisi']) {
     if (!table.includes(kalem)) throw new Error(`${kalem} satırı yok`);
   }
   const kpis = await page.$$eval('.kpi strong', (els) => els.map((e) => e.textContent.trim()));

@@ -34,6 +34,29 @@ export function select(props, options, value) {
   return el;
 }
 
+/**
+ * Göz simgesiyle göster/gizle düğmeli şifre alanı (PRD v2 §1.1).
+ * Varsayılan gizlidir; görünürlük değişimi girilen değeri etkilemez.
+ */
+export function passwordField(label, props = {}, hint) {
+  const input = h('input', { type: 'password', ...props });
+  const toggle = h('button', {
+    class: 'pw-toggle', type: 'button',
+    title: 'Şifreyi göster', 'aria-label': 'Şifreyi göster', 'aria-pressed': 'false',
+    onClick: () => {
+      const göster = input.type === 'password';
+      input.type = göster ? 'text' : 'password';
+      toggle.textContent = göster ? '🙈' : '👁️';
+      toggle.title = göster ? 'Şifreyi gizle' : 'Şifreyi göster';
+      toggle.setAttribute('aria-label', toggle.title);
+      toggle.setAttribute('aria-pressed', String(göster));
+      input.focus();
+    },
+  }, '👁️');
+
+  return field(label, h('div', { class: 'pw-wrap' }, input, toggle), hint);
+}
+
 export function field(label, control, hint) {
   return h('label', { class: 'field' }, h('span', { class: 'field-label' }, label), control,
     hint ? h('span', { class: 'field-hint' }, hint) : null);

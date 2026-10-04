@@ -1,7 +1,7 @@
 /** Giriş ekranı ve zorunlu şifre değiştirme (PRD §1.1, §7). */
 
 import { api } from '../core/api.js';
-import { clear, errorList, field, h, toast } from './dom.js';
+import { clear, errorList, field, h, passwordField, toast } from './dom.js';
 
 /**
  * Giriş ekranını basar. Başarılı girişte `onSuccess(user)` çağrılır.
@@ -41,10 +41,10 @@ export function loginView(root, onSuccess) {
         type: 'text', autocomplete: 'username', autofocus: true, required: true,
         onInput: (e) => { draft.username = e.target.value; },
       })),
-      field('Şifre', h('input', {
-        type: 'password', autocomplete: 'current-password', required: true,
+      passwordField('Şifre', {
+        autocomplete: 'current-password', required: true,
         onInput: (e) => { draft.password = e.target.value; },
-      })),
+      }),
       submit,
       h('p', { class: 'muted small center' },
         'Yetkiniz olmayan modüller menüde görünmez. Şifrenizi bilmiyorsanız yöneticinize başvurun.'))));
@@ -83,18 +83,18 @@ export function forcePasswordChange(root, { store, user, onDone, onLogout }) {
           h('h1', {}, 'Şifre Değiştirme Zorunlu'),
           h('p', { class: 'muted' }, `${user.displayName || user.username} — varsayılan şifreyle giriş yaptınız.`))),
       errorBox,
-      field('Mevcut Şifre', h('input', {
-        type: 'password', autocomplete: 'current-password', required: true,
+      passwordField('Mevcut Şifre', {
+        autocomplete: 'current-password', required: true,
         onInput: (e) => { draft.currentPassword = e.target.value; },
-      })),
-      field('Yeni Şifre', h('input', {
-        type: 'password', autocomplete: 'new-password', required: true,
+      }),
+      passwordField('Yeni Şifre', {
+        autocomplete: 'new-password', required: true,
         onInput: (e) => { draft.newPassword = e.target.value; },
-      }), 'En az 6 karakter, en az bir harf ve bir rakam.'),
-      field('Yeni Şifre (tekrar)', h('input', {
-        type: 'password', autocomplete: 'new-password', required: true,
+      }, 'En az 6 karakter, en az bir harf ve bir rakam.'),
+      passwordField('Yeni Şifre (tekrar)', {
+        autocomplete: 'new-password', required: true,
         onInput: (e) => { draft.repeat = e.target.value; },
-      })),
+      }),
       h('button', { class: 'btn primary wide', type: 'submit' }, 'Şifreyi Değiştir ve Devam Et'),
       h('button', {
         class: 'btn ghost wide', type: 'button',

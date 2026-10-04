@@ -19,6 +19,8 @@ const SOURCES = [
   { key: 'personel', label: 'Personel (Maaş + SGK)', module: 'calisanlar', color: '#d95926', view: 'calisanlar' },
   { key: 'ekstra', label: 'Ekstra Çalışan', module: 'ekstraCalisan', color: '#199e70', view: 'ekstra' },
   { key: 'toptanci', label: 'Toptancı Faturaları', module: 'toptancilar', color: '#c98500', view: 'toptancilar' },
+  { key: 'restoran', label: 'Restoran Ekstra Giderler', module: 'restoranGider', color: '#d55181', view: 'restoranGider' },
+  { key: 'yabanci', label: 'Yabancı Çalışanlar', module: 'yabanciCalisanlar', color: '#9085e9', view: 'yabanci' },
 ];
 
 /**
@@ -89,6 +91,36 @@ export function collectExpenses(app) {
         extra: txn.note,
         amount: txn.amount,
         group: 'operational',
+      });
+    }
+  }
+
+  if (app.can('restoranGider')) {
+    for (const expense of state.restaurantExpenses) {
+      if (expense.active === false || expense.date < p.from || expense.date > p.to) continue;
+      rows.push({
+        source: 'restoran',
+        date: expense.date,
+        title: expense.note || expense.category,
+        detail: expense.category,
+        extra: expense.paymentMethod,
+        amount: expense.amount,
+        group: 'operational',
+      });
+    }
+  }
+
+  if (app.can('yabanciCalisanlar')) {
+    for (const worker of state.foreignWorkers) {
+      if (worker.active === false || worker.period !== month) continue;
+      rows.push({
+        source: 'yabanci',
+        date: worker.paymentDate || `${worker.period}-01`,
+        title: worker.name,
+        detail: 'Yabancı çalışan maaşı',
+        extra: worker.note,
+        amount: worker.amount,
+        group: 'fixed',
       });
     }
   }

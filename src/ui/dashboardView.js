@@ -6,6 +6,7 @@
 
 import { EXPENSE_GROUPS, UTILITY_KINDS, UTILITY_LABELS } from '../core/catalog.js';
 import { compareReports, grossUpForCommission, priceVerdict } from '../core/costEngine.js';
+import { defaultTaxRates, restaurantIncomeSummary } from '../core/finance.js';
 import { previousYear } from '../core/dates.js';
 import { categoryOf, roomLabel } from '../core/model.js';
 import { formatDecimal, formatNumber, formatPercent } from '../core/format.js';
@@ -16,20 +17,42 @@ export function dashboardView(app) {
   const report = app.report();
   const present = app.present();
   const { totals } = report;
-  const settings = app.store.getState().settings;
+  const state = app.store.getState();
+  const settings = state.settings;
+  const p = app.period();
+
+  // PRD v2 §2.1 — restoran geliri genel gelire dahil edilir.
+  const rates = { ...defaultTaxRates(), ...(settings.tax ?? {}) };
+  const restaurant = app.can('restoranGelir')
+    ? restaurantIncomeSummary(state.restaurantIncomes, { from: p.from, to: p.to, kdvRate: rates.kdvRestaurant ?? 10 })
+    : { gross: 0, net: 0, count: 0 };
+  const restaurantExpenses = app.can('restoranGider')
+    ? state.restaurantExpenses.filter((e) => e.active !== false && e.date >= p.from && e.date <= p.to)
+      .reduce((sum, e) => sum + e.amount, 0)
+    : 0;
+
+  const combinedRevenue = Math.round((totals.revenue + restaurant.gross) * 100) / 100;
+  const combinedProfit = Math.round((totals.netProfit + restaurant.gross - restaurantExpenses) * 100) / 100;
 
   const marginTone = totals.targetMet ? 'good' : 'bad';
 
   const kpis = h('div', { class: 'kpi-grid' },
-    kpi('Gelir', present.money(totals.revenue), `Komisyon sonrası ${present.money(totals.netRevenue)}`),
+    kpi('Toplam Gelir', present.money(combinedRevenue),
+      restaurant.gross > 0
+        ? `Oda ${present.money(totals.revenue)} + restoran ${present.money(restaurant.gross)}`
+        : `Komisyon sonrası ${present.money(totals.netRevenue)}`),
     kpi('Toplam Gider', present.money(totals.expenses), `${present.money(totals.totalCost)} odalara dağıtıldı`),
-    kpi('Net Kâr', present.money(totals.netProfit), `Hedef marj %${Math.round(totals.targetMargin * 100)}`, marginTone),
+    kpi('Net Kâr', present.money(combinedProfit),
+      restaurant.gross > 0 ? 'Restoran dâhil' : `Hedef marj %${Math.round(totals.targetMargin * 100)}`, marginTone),
     kpi('Kâr Marjı', formatPercent(totals.margin),
       totals.targetMet ? '✔ hedefin üzerinde' : '✖ hedefin altında', marginTone),
     kpi('ADR', present.money(totals.adr), 'Ortalama satılan gece fiyatı'),
     kpi('RevPAR', present.money(totals.revpar), `${formatNumber(totals.availableRoomNights)} satılabilir gece`),
     kpi('Doluluk', formatPercent(totals.occupancyRate), `${formatNumber(totals.roomNights)} oda-gecesi`),
-    kpi('Kişi Başı Maliyet', present.money(totals.costPerGuestNight), `${formatNumber(totals.guestNights)} kişi-gece`));
+    kpi('Kişi Başı Maliyet', present.money(totals.costPerGuestNight), `${formatNumber(totals.guestNights)} kişi-gece`),
+    restaurant.gross > 0
+      ? kpi('Restoran Geliri', present.money(restaurant.gross), `${restaurant.count} gün sonu · KDV ${present.money(restaurant.kdv)}`)
+      : null);
 
   return h('div', { class: 'stack' },
     h('div', {},

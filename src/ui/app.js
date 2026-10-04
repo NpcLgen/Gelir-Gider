@@ -15,7 +15,7 @@ import { createStore } from '../core/store.js';
 import { calendarView, openBulkEditor } from './calendarView.js';
 import { cashView } from './cashView.js';
 import { dashboardView } from './dashboardView.js';
-import { clear, h, toast } from './dom.js';
+import { append, clear, h, toast } from './dom.js';
 import { employeesView } from './employeesView.js';
 import { excelView } from './excelView.js';
 import { expenseSummaryView } from './expenseSummaryView.js';
@@ -27,6 +27,10 @@ import { reportsView } from './reportsView.js';
 import { reservationsView } from './reservationsView.js';
 import { roomsView } from './roomsView.js';
 import { settingsView } from './settingsView.js';
+import { backupView } from './backupView.js';
+import { foreignWorkersView } from './foreignWorkersView.js';
+import { restaurantExpenseView } from './restaurantExpenseView.js';
+import { restaurantIncomeView } from './restaurantView.js';
 import { suppliersView } from './suppliersView.js';
 import { taxView } from './taxView.js';
 import { openOwnPasswordForm, usersView } from './usersView.js';
@@ -42,8 +46,11 @@ const VIEWS = [
   { key: 'giderler', label: 'Genel Harcamalar', icon: '🧾', module: 'genelHarcamalar', group: 'Giderler', render: expensesView },
   { key: 'calisanlar', label: 'Çalışanlar', icon: '👷', module: 'calisanlar', group: 'Giderler', render: employeesView },
   { key: 'ekstra', label: 'Ekstra Çalışan', icon: '🧑‍🔧', module: 'ekstraCalisan', group: 'Giderler', render: extraWorkersView },
+  { key: 'yabanci', label: 'Yabancı Çalışanlar', icon: '🌍', module: 'yabanciCalisanlar', group: 'Giderler', render: foreignWorkersView },
   { key: 'vergiler', label: 'Vergiler', icon: '🧮', module: 'vergiler', group: 'Giderler', render: taxView },
 
+  { key: 'restoranGelir', label: 'Restoran Gelirleri', icon: '🍽️', module: 'restoranGelir', group: 'Restoran', render: restaurantIncomeView },
+  { key: 'restoranGider', label: 'Ekstra Giderler', icon: '🧂', module: 'restoranGider', group: 'Restoran', render: restaurantExpenseView },
   { key: 'toptancilar', label: 'Toptancılar', icon: '🥬', module: 'toptancilar', group: 'Restoran', render: suppliersView },
 
   { key: 'kasa', label: 'Gün Sonu / Kasa', icon: '💰', module: 'kasa', group: 'Kasa', render: cashView },
@@ -52,10 +59,26 @@ const VIEWS = [
   { key: 'excel', label: 'Excel İşlemleri', icon: '📑', module: 'excelIceAktarim', altModule: 'excelDisaAktarim', group: 'Raporlar', render: excelView },
 
   { key: 'kullanicilar', label: 'Kullanıcı ve Yetki', icon: '👥', module: 'kullaniciYonetimi', group: 'Yönetim', render: usersView },
+  { key: 'yedekleme', label: 'Yedekleme', icon: '💾', module: 'yedekleme', group: 'Yönetim', render: backupView },
   { key: 'ayarlar', label: 'Ayarlar', icon: '⚙️', module: 'ayarlar', group: 'Yönetim', render: settingsView },
 ];
 
+/**
+ * Etkin oturumun olay dinleyicilerini tutar.
+ *
+ * Çıkış→giriş akışında eski oturumun `hashchange` dinleyicisi sayfada kalıyor ve
+ * yeni kullanıcının gittiği sayfayı "yetkiniz yok" diyerek geri alıyordu (PRD v2 §1.2).
+ * Her yeni oturum, öncekini iptal ederek başlar.
+ */
+let activeSession = null;
+
+function endActiveSession() {
+  activeSession?.abort();
+  activeSession = null;
+}
+
 export async function mount(root) {
+  endActiveSession();
   setUnauthorizedHandler(() => showLogin('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.'));
 
   const session = await api.get('/api/auth/me').catch(() => null);
@@ -72,6 +95,10 @@ export async function mount(root) {
 }
 
 async function startApp(root, user) {
+  endActiveSession();
+  const session = new AbortController();
+  activeSession = session;
+
   const store = await createStore();
 
   if (user.mustChangePassword) {
@@ -89,12 +116,28 @@ async function startApp(root, user) {
   const can = (moduleKey) => Boolean(me()?.isAdmin || me()?.permissions?.[moduleKey]);
 
   const allowed = VIEWS.filter((view) => can(view.module) || (view.altModule && can(view.altModule)));
-  let current = location.hash.slice(1) || allowed[0]?.key || 'panel';
-  if (!allowed.some((v) => v.key === current)) current = allowed[0]?.key ?? 'panel';
+
+  // PRD v2 §1.3: giriş sonrası varsayılan açılış Dashboard'dır.
+  // Sayfa yenilemesinde adresteki sayfa korunur; yeni girişte adres sıfırlanır.
+  const hashKey = location.hash.slice(1);
+  const defaultKey = allowed.some((v) => v.key === 'panel') ? 'panel' : allowed[0]?.key ?? 'panel';
+  let current = allowed.some((v) => v.key === hashKey) ? hashKey : defaultKey;
+  if (location.hash.slice(1) !== current) location.hash = current;
 
   const content = h('main', { class: 'content' });
   const nav = h('nav', { class: 'nav' });
   const topbar = h('header', { class: 'topbar no-print' });
+  const sidebar = h('aside', { class: 'sidebar no-print' });
+  const backdrop = h('div', { class: 'sidebar-backdrop', onClick: () => closeSidebar() });
+
+  const openSidebar = () => {
+    sidebar.classList.add('open');
+    backdrop.classList.add('show');
+  };
+  const closeSidebar = () => {
+    sidebar.classList.remove('open');
+    backdrop.classList.remove('show');
+  };
 
   const app = {
     store,
@@ -120,12 +163,8 @@ async function startApp(root, user) {
       }
       current = key;
       location.hash = key;
-      // Gidilen sayfanın bulunduğu grup kapalıysa açılır.
-      const group = groupOf(key);
-      if (group && collapsed.has(group)) {
-        collapsed.delete(group);
-        persistCollapsed();
-      }
+      openGroupFor(key);
+      closeSidebar();
       app.refresh();
     },
     refresh() {
@@ -142,30 +181,41 @@ async function startApp(root, user) {
     },
   };
 
-  /** Kapalı menü grupları tarayıcıda hatırlanır. */
-  const COLLAPSE_KEY = 'otel:kapali-menu-gruplari';
-  const loadCollapsed = () => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]'));
-    } catch {
-      return new Set();
-    }
-  };
-  const collapsed = loadCollapsed();
-  const persistCollapsed = () => {
-    try {
-      localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed]));
-    } catch {
-      /* gizli sekme vb. — hatırlamadan devam et */
-    }
-  };
-
+  /** PRD v2 §1.3: aynı anda yalnızca bir ana kategori açık kalır. */
+  const OPEN_GROUP_KEY = 'otel:acik-menu-grubu';
   const groupOf = (key) => allowed.find((v) => v.key === key)?.group;
 
+  let openGroup = groupOf(current) ?? allowed[0]?.group ?? null;
+  try {
+    const saved = localStorage.getItem(OPEN_GROUP_KEY);
+    // Kullanıcı tüm grupları kapattıysa bu tercih korunur (aktif sayfa noktayla belirtilir).
+    if (saved === 'null') openGroup = null;
+    // Diğer durumda kaydedilmiş grup yalnızca mevcut sayfanın grubuysa açılır.
+    else if (saved && groupOf(current) === saved) openGroup = saved;
+  } catch {
+    /* gizli sekme vb. — varsayılanla devam */
+  }
+
+  const persistOpenGroup = () => {
+    try {
+      localStorage.setItem(OPEN_GROUP_KEY, openGroup ?? 'null');
+    } catch {
+      /* hatırlamadan devam */
+    }
+  };
+
+  function openGroupFor(key) {
+    const group = groupOf(key);
+    if (group && group !== openGroup) {
+      openGroup = group;
+      persistOpenGroup();
+    }
+  }
+
   function toggleGroup(group) {
-    if (collapsed.has(group)) collapsed.delete(group);
-    else collapsed.add(group);
-    persistCollapsed();
+    // Akordiyon: açılan grup dışındakiler kapanır.
+    openGroup = openGroup === group ? null : group;
+    persistOpenGroup();
     renderNav();
   }
 
@@ -178,7 +228,7 @@ async function startApp(root, user) {
     }
 
     for (const [group, items] of groups) {
-      const open = !collapsed.has(group);
+      const open = openGroup === group;
       const activeInside = items.some((v) => v.key === current);
 
       nav.appendChild(h('button', {
@@ -276,7 +326,12 @@ async function startApp(root, user) {
         }, '🚪 Çıkış Yap')));
 
     topbar.appendChild(h('div', { class: 'row between center wrap gap' },
-      h('div', { class: 'row gap center wrap' }, monthNav, quick, customRange),
+      h('div', { class: 'row gap center wrap' },
+        h('button', {
+          class: 'menu-btn', type: 'button', title: 'Menü', 'aria-label': 'Menüyü aç',
+          onClick: openSidebar,
+        }, '☰'),
+        monthNav, quick, customRange),
       h('div', { class: 'row gap center' },
         h('span', { class: 'muted small' }, `1 € = ${(settings.fx?.rate ?? 0).toFixed(2)} ₺`),
         currencyToggle,
@@ -292,6 +347,7 @@ async function startApp(root, user) {
     if (key !== current) {
       if (allowed.some((v) => v.key === key)) {
         current = key;
+        openGroupFor(key);
         app.refresh();
       } else {
         // Yetkisiz sayfaya adresten gidilemez.
@@ -299,26 +355,45 @@ async function startApp(root, user) {
         toast('Bu sayfa için yetkiniz bulunmuyor.', 'error');
       }
     }
-  });
+  }, { signal: session.signal });
 
+  // Dokunmatik cihazda üzerine gelme yoktur; kısayol menüsü düğmeyle açılıp kapanır.
+  const closeFab = () => fab?.classList.remove('open');
   const fab = can('genelHarcamalar') || can('fiyatGirisi')
     ? h('div', { class: 'fab no-print' },
       h('div', { class: 'fab-menu' },
         can('genelHarcamalar')
-          ? h('button', { class: 'btn small', type: 'button', onClick: () => openExpenseForm(app, null) }, '＋ Gider Ekle')
+          ? h('button', {
+            class: 'btn small', type: 'button',
+            onClick: () => { closeFab(); openExpenseForm(app, null); },
+          }, '＋ Gider Ekle')
           : null,
         can('fiyatGirisi')
-          ? h('button', { class: 'btn small', type: 'button', onClick: () => openBulkEditor(app) }, '＋ Hızlı Fiyat Gir')
+          ? h('button', {
+            class: 'btn small', type: 'button',
+            onClick: () => { closeFab(); openBulkEditor(app); },
+          }, '＋ Hızlı Fiyat Gir')
           : null),
-      h('button', { class: 'fab-btn', type: 'button', title: 'Hızlı ekle', 'aria-label': 'Hızlı ekle' }, '＋'))
+      h('button', {
+        class: 'fab-btn', type: 'button', title: 'Hızlı ekle', 'aria-label': 'Hızlı ekle',
+        onClick: () => fab.classList.toggle('open'),
+      }, '＋'))
     : null;
 
+  append(sidebar, [
+    h('div', { class: 'brand' },
+      h('span', { class: 'brand-mark' }, '🏨'),
+      h('div', {}, h('strong', {}, 'Otel Finans'), h('div', { class: 'muted small' }, 'Yönetim Sistemi')),
+      h('button', {
+        class: 'icon-btn sidebar-close', type: 'button', title: 'Menüyü kapat',
+        onClick: closeSidebar,
+      }, '✕')),
+    nav,
+    h('div', { class: 'sidebar-foot muted small' }, `${allowed.length} modül erişiminiz var`),
+  ]);
+
   clear(root).appendChild(h('div', { class: 'layout' },
-    h('aside', { class: 'sidebar no-print' },
-      h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, '🏨'),
-        h('div', {}, h('strong', {}, 'Otel Finans'), h('div', { class: 'muted small' }, 'Yönetim Sistemi'))),
-      nav,
-      h('div', { class: 'sidebar-foot muted small' }, `${allowed.length} modül erişiminiz var`)),
+    sidebar, backdrop,
     h('div', { class: 'main' }, topbar, content)));
   if (fab) root.appendChild(fab);
 

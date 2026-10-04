@@ -10,6 +10,7 @@
  */
 
 import { chromium } from 'playwright';
+import { makeGo } from './nav.mjs';
 
 const errors = [];
 const browser = await chromium.launch({
@@ -92,8 +93,22 @@ async function waitForToast(fragment) {
 /** Bildirimi gizler ki sonraki adım eskisini okumasın. */
 const clearToast = () => page.evaluate(() => document.querySelector('.toast')?.classList.remove('show'));
 
-// Menü etiketleri emoji ile başlar; sondan eşleştirmek "Ayarlar"ı "Oda Ayarları"ndan ayırır.
-const go = (label) => page.locator('.nav-item').filter({ hasText: new RegExp(`${label}$`) }).first().click();
+// Akordiyon menüde hedef öğe gizliyse grup başlığı açılır (bkz. nav.mjs).
+const go = makeGo(page);
+
+// Ayarlar kategorilere ayrıldı (PRD v2 §5.1); ilgili sekme açılmalı.
+const settingsTab = async (label) => {
+  await go('Ayarlar');
+  await page.locator('.settings-tab').filter({ hasText: label }).first().click();
+  await page.waitForSelector('.settings-tab.active');
+};
+const saveSettings = async () => {
+  await clearToast();
+  await page.click('.btn.primary:has-text("Kaydet")');
+  await waitForToast('Ayarlar kaydedildi');
+};
+// Sekme değişiminde çıkan "kaydedilmemiş değişiklik" onayı testte kabul edilir.
+page.on('dialog', (d) => d.accept());
 const today = new Date();
 const y = today.getUTCFullYear();
 const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
@@ -103,7 +118,7 @@ const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
 await step('Dashboard KPI kartları dolu (ADR, RevPAR, marj dâhil)', async () => {
   await page.waitForSelector('.kpi-grid .kpi');
   const labels = await page.$$eval('.kpi .muted.small:first-child', (els) => els.map((e) => e.textContent));
-  for (const needed of ['Gelir', 'Net Kâr', 'ADR', 'RevPAR', 'Doluluk', 'Kişi Başı Maliyet']) {
+  for (const needed of ['Toplam Gelir', 'Net Kâr', 'ADR', 'RevPAR', 'Doluluk', 'Kişi Başı Maliyet']) {
     if (!labels.includes(needed)) throw new Error(`${needed} KPI'si yok: ${labels.join(', ')}`);
   }
   const values = await page.$$eval('.kpi strong', (els) => els.map((e) => e.textContent));
@@ -307,44 +322,36 @@ await step('EUR rezervasyon komisyon oranıyla kaydedilir', async () => {
 /* ------------------------------------------ §8 ayarlar ---------------- */
 
 await step('Dağıtım yöntemi A/B/C arasında değiştirilir', async () => {
-  await go('Ayarlar');
+  await settingsTab('Genel Ayarlar');
   await page.waitForSelector('.method-card');
   await page.click('.method-card:has-text("Metrekare")');
-  await clearToast();
-  await page.click('button:has-text("Ayarları Kaydet")');
-  await waitForToast('Ayarlar kaydedildi');
+  await saveSettings();
   await go('Dashboard');
   const footer = await page.textContent('.method-footer');
   if (!footer.includes('Metrekare')) throw new Error(footer);
   console.log(`   ${footer.trim()}`);
-  await go('Ayarlar');
+  await settingsTab('Genel Ayarlar');
   await page.click('.method-card:has-text("Özel Katsayı")');
-  await clearToast();
-  await page.click('button:has-text("Ayarları Kaydet")');
-  await waitForToast('Ayarlar kaydedildi');
+  await saveSettings();
 });
 
 await step('Hedef marj paneldeki renklendirmeyi belirler', async () => {
+  await settingsTab('Vergi ve Finans');
   await page.locator('input.target-margin').fill('0.99');
-  await clearToast();
-  await page.click('button:has-text("Ayarları Kaydet")');
-  await waitForToast('Ayarlar kaydedildi');
+  await saveSettings();
   await go('Dashboard');
   const tone = await page.getAttribute('.kpi:has-text("Kâr Marjı") strong', 'class');
   if (tone !== 'bad') throw new Error(`hedef altındayken kırmızı olmalı, sınıf: ${tone}`);
-  await go('Ayarlar');
+  await settingsTab('Vergi ve Finans');
   await page.locator('input.target-margin').fill('0.35');
-  await clearToast();
-  await page.click('button:has-text("Ayarları Kaydet")');
-  await waitForToast('Ayarlar kaydedildi');
+  await saveSettings();
 });
 
 await step('Kategori yöneticisi özel kategori ekler', async () => {
+  await settingsTab('Vergi ve Finans');
   await page.click('button:has-text("Kategori Ekle")');
   await page.fill('.category-row input[type="text"]', 'Havuz Kimyasalı');
-  await clearToast();
-  await page.click('button:has-text("Ayarları Kaydet")');
-  await waitForToast('Ayarlar kaydedildi');
+  await saveSettings();
   await go('Genel Harcamalar');
   await page.click('button:has-text("Yeni Gider")');
   const options = await page.$$eval('select.expense-category option', (els) => els.map((o) => o.textContent));

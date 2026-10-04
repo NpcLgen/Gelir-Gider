@@ -14,6 +14,7 @@ export const PRINT_SECTIONS = [
   { key: 'kdv', label: 'KDV ve Vergiler', selector: '[data-print="vergiler"]' },
   { key: 'kasa', label: 'Kasa Durumu', selector: '[data-print="kasa"]' },
   { key: 'odalar', label: 'Oda Bazlı Tablolar', selector: '[data-print="odalar"]' },
+  { key: 'restoran', label: 'Restoran Gelirleri', selector: '[data-print="restoran"]' },
   { key: 'tables', label: 'Diğer Tablolar', selector: '.table-card' },
 ];
 
@@ -25,12 +26,13 @@ export function openPrintDialog(title = 'Rapor') {
     subtitle: `${title} — çıktıya girecek bölümleri seçin`,
     size: 'sm',
     content: (close) => {
-      const list = h('div', { class: 'stack tight' }, ...PRINT_SECTIONS.map((section) =>
-        h('label', { class: 'check-inline print-option' },
+      const list = h('div', { class: 'print-options' }, ...PRINT_SECTIONS.map((section) =>
+        h('label', { class: 'print-option' },
           h('input', {
             type: 'checkbox', checked: true, dataset: { section: section.key },
             onChange: (e) => { selection[section.key] = e.target.checked; },
-          }), section.label)));
+          }),
+          h('span', {}, section.label))));
 
       return h('div', { class: 'stack' },
         list,

@@ -1,7 +1,7 @@
 /** Kullanıcı ve Yetki Yönetimi — yalnızca Admin (PRD §6). */
 
 import { formatDate } from '../core/format.js';
-import { clear, confirmDialog, errorList, field, h, openModal, toast } from './dom.js';
+import { clear, confirmDialog, errorList, field, h, openModal, passwordField, toast } from './dom.js';
 
 export function usersView(app) {
   const { users, modules, me, auditLog } = app.store.getState();
@@ -132,10 +132,10 @@ export function openUserForm(app, source) {
             type: 'text', value: draft.displayName, class: 'user-display',
             onInput: (e) => { draft.displayName = e.target.value; },
           })),
-          field(source ? 'Yeni Şifre (boş bırakılırsa değişmez)' : 'Şifre *', h('input', {
-            type: 'password', value: draft.password, class: 'user-password', autocomplete: 'new-password',
+          passwordField(source ? 'Yeni Şifre (boş bırakılırsa değişmez)' : 'Şifre *', {
+            value: draft.password, class: 'user-password', autocomplete: 'new-password',
             onInput: (e) => { draft.password = e.target.value; },
-          }), 'En az 6 karakter, bir harf ve bir rakam.')),
+          }, 'En az 6 karakter, bir harf ve bir rakam.')),
         h('div', { class: 'row gap wrap' },
           h('label', { class: 'check-inline' },
             h('input', {
@@ -181,18 +181,18 @@ export function openOwnPasswordForm(app) {
       const errorBox = h('div', { class: 'error-box hidden' });
       return h('form', { class: 'stack', onSubmit: (e) => e.preventDefault() },
         errorBox,
-        field('Mevcut Şifre', h('input', {
-          type: 'password', autocomplete: 'current-password',
+        passwordField('Mevcut Şifre', {
+          autocomplete: 'current-password',
           onInput: (e) => { draft.currentPassword = e.target.value; },
-        })),
-        field('Yeni Şifre', h('input', {
-          type: 'password', autocomplete: 'new-password',
+        }),
+        passwordField('Yeni Şifre', {
+          autocomplete: 'new-password',
           onInput: (e) => { draft.newPassword = e.target.value; },
-        })),
-        field('Yeni Şifre (tekrar)', h('input', {
-          type: 'password', autocomplete: 'new-password',
+        }),
+        passwordField('Yeni Şifre (tekrar)', {
+          autocomplete: 'new-password',
           onInput: (e) => { draft.repeat = e.target.value; },
-        })),
+        }),
         h('div', { class: 'row end gap' },
           h('button', { class: 'btn ghost', type: 'button', onClick: close }, 'Vazgeç'),
           h('button', {

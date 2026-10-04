@@ -197,12 +197,149 @@ export function cashSummary({ date, openingCash = 0, countedCash = 0, income = 0
   };
 }
 
+
+/* ------------------------------- §2.1/§2.3 Restoran gelirleri (gün sonu) -- */
+
+/** Bir güne en fazla iki gün sonu kaydı girilebilir. */
+export const MAX_DAY_END_PER_DAY = 2;
+
+export function createRestaurantIncome(patch = {}) {
+  const sequence = Math.min(MAX_DAY_END_PER_DAY, Math.max(1, Math.round(num(patch.sequence, 1))));
+  return {
+    id: patch.id || uid('rin'),
+    date: patch.date || '',
+    /** Gün sonu sıra numarası (1 veya 2). */
+    sequence,
+    amount: num(patch.amount, 0),
+    /** Tutar KDV dahil mi girildi? */
+    kdvIncluded: patch.kdvIncluded !== false,
+    note: text(patch.note),
+    /** İptal edilen kayıtlar hesaplamalara girmez. */
+    active: patch.active !== false,
+  };
+}
+
+export function validateRestaurantIncome(income, { incomes = [] } = {}) {
+  const errors = [];
+  if (!isValidDate(income.date)) errors.push('Geçerli bir tarih giriniz.');
+  if (num(income.amount, 0) <= 0) errors.push('Gelir tutarı 0’dan büyük olmalıdır.');
+  if (![1, 2].includes(income.sequence)) errors.push('Gün sonu sıra numarası 1 veya 2 olmalıdır.');
+
+  const sameDay = incomes.filter((i) => i.id !== income.id && i.date === income.date && i.active !== false);
+  if (income.active !== false) {
+    if (sameDay.some((i) => i.sequence === income.sequence)) {
+      errors.push(`${income.date} tarihinde ${income.sequence}. gün sonu zaten kayıtlı.`);
+    }
+    if (sameDay.length >= MAX_DAY_END_PER_DAY) {
+      errors.push(`Bir güne en fazla ${MAX_DAY_END_PER_DAY} gün sonu kaydı girilebilir.`);
+    }
+  }
+  return errors;
+}
+
+/** Bir günün restoran geliri: aynı tarihin gün sonu kayıtları toplanır. */
+export function restaurantDayTotal(date, incomes) {
+  const rows = incomes.filter((i) => i.date === date && i.active !== false);
+  return {
+    date,
+    entries: rows.sort((a, b) => a.sequence - b.sequence),
+    total: round2(rows.reduce((sum, i) => sum + i.amount, 0)),
+  };
+}
+
+/** Dönem içi restoran geliri ve KDV'si. */
+export function restaurantIncomeSummary(incomes, { from = '', to = '', kdvRate = 10 } = {}) {
+  const rows = incomes.filter((i) => i.active !== false
+    && (!from || i.date >= from) && (!to || i.date <= to));
+
+  let gross = 0;
+  let kdv = 0;
+  for (const income of rows) {
+    // KDV hariç girildiyse tutara KDV eklenerek brüt bulunur.
+    const grossAmount = income.kdvIncluded ? income.amount : income.amount * (1 + kdvRate / 100);
+    gross += grossAmount;
+    kdv += (grossAmount * kdvRate) / (100 + kdvRate);
+  }
+
+  const byDay = new Map();
+  for (const income of rows) {
+    byDay.set(income.date, round2((byDay.get(income.date) ?? 0) + income.amount));
+  }
+
+  return {
+    gross: round2(gross),
+    kdv: round2(kdv),
+    net: round2(gross - kdv),
+    count: rows.length,
+    days: byDay.size,
+    byDay: [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])),
+  };
+}
+
+/* ----------------------------------- §2.4 Restoran ekstra giderleri ------ */
+
+export const RESTAURANT_EXPENSE_CATEGORIES = [
+  'Restoran Ekipmanı', 'Mutfak Sarf Malzemesi', 'Küçük Tamirat',
+  'Temizlik Malzemesi', 'Operasyonel Harcama', 'Diğer',
+];
+
+export const PAYMENT_METHODS = ['Nakit', 'Kredi Kartı', 'Havale/EFT', 'Veresiye', 'Diğer'];
+
+export function createRestaurantExpense(patch = {}) {
+  return {
+    id: patch.id || uid('rex'),
+    date: patch.date || '',
+    category: RESTAURANT_EXPENSE_CATEGORIES.includes(patch.category) ? patch.category : 'Diğer',
+    amount: num(patch.amount, 0),
+    note: text(patch.note),
+    paymentMethod: PAYMENT_METHODS.includes(patch.paymentMethod) ? patch.paymentMethod : '',
+    active: patch.active !== false,
+  };
+}
+
+export function validateRestaurantExpense(expense) {
+  const errors = [];
+  if (!isValidDate(expense.date)) errors.push('Geçerli bir harcama tarihi giriniz.');
+  if (num(expense.amount, 0) <= 0) errors.push('Tutar 0’dan büyük olmalıdır.');
+  if (!text(expense.note) && !expense.category) errors.push('Açıklama veya kategori giriniz.');
+  return errors;
+}
+
+/* --------------------------------------- §3.1 Yabancı çalışanlar --------- */
+
+export function createForeignWorker(patch = {}) {
+  return {
+    id: patch.id || uid('frw'),
+    name: text(patch.name),
+    /** Dönem: 'YYYY-MM'. */
+    period: isValidMonth(patch.period) ? patch.period : '',
+    amount: num(patch.amount, 0),
+    paymentDate: patch.paymentDate || '',
+    note: text(patch.note),
+    active: patch.active !== false,
+  };
+}
+
+export function validateForeignWorker(worker, { workers = [] } = {}) {
+  const errors = [];
+  if (!text(worker.name)) errors.push('Çalışan adı zorunludur.');
+  if (!isValidMonth(worker.period)) errors.push('Geçerli bir dönem (ay) seçilmelidir.');
+  if (num(worker.amount, 0) <= 0) errors.push('Maaş tutarı 0’dan büyük olmalıdır.');
+  if (worker.paymentDate && !isValidDate(worker.paymentDate)) errors.push('Ödeme tarihi geçersiz.');
+  const clash = workers.find((w) => w.id !== worker.id && w.period === worker.period
+    && text(w.name).toLocaleLowerCase('tr') === text(worker.name).toLocaleLowerCase('tr'));
+  if (clash) errors.push(`${worker.name} için ${worker.period} dönemi zaten kayıtlı.`);
+  return errors;
+}
+
 /* ----------------------------------------------------- §5.1 Vergi oranları -- */
 
 export function defaultTaxRates() {
   return {
     /** Konaklama hizmetlerinde hesaplanan KDV (%). */
     kdvIncome: 10,
+    /** Restoran / yiyecek-içecek gelirlerinde hesaplanan KDV (%) — PRD v2 §2.2. */
+    kdvRestaurant: 10,
     /** Giderlerde varsayılan indirilecek KDV (%). */
     kdvExpense: 20,
     /** Konaklama vergisi (%). */
@@ -211,6 +348,11 @@ export function defaultTaxRates() {
     tourismShare: 0.75,
     /** Net kâr üzerinden gelir/kurumlar vergisi (%). */
     incomeTax: 25,
+    /**
+     * Yabancı çalışan maaşları vergi matrahından indirilebilir mi? (PRD v2 §3.1)
+     * Varsayılan: hayır — gidere dahil edilir, matrahtan indirilmez.
+     */
+    foreignStaffDeductible: false,
   };
 }
 
@@ -218,6 +360,7 @@ export function validateTaxRates(rates) {
   const errors = [];
   for (const [key, label] of Object.entries({
     kdvIncome: 'Gelir KDV oranı',
+    kdvRestaurant: 'Restoran KDV oranı',
     kdvExpense: 'Gider KDV oranı',
     accommodationTax: 'Konaklama vergisi oranı',
     tourismShare: 'Turizm payı oranı',
@@ -234,38 +377,67 @@ export function validateTaxRates(rates) {
  * KDV dahil tutarlar üzerinden iç yüzde ile hesaplanır:
  *   KDV = tutar × oran / (100 + oran)
  */
-export function taxReport({ revenue = 0, expenses = 0, expenseKdvBase = null, rates = defaultTaxRates() }) {
+export function taxReport({
+  revenue = 0,
+  expenses = 0,
+  expenseKdvBase = null,
+  /** Restoran geliri (KDV dahil) — kendi KDV oranıyla hesaplanır (PRD v2 §2.2). */
+  restaurantRevenue = 0,
+  /** Vergi matrahından indirilemeyen giderler (ör. yabancı çalışan maaşları). */
+  nonDeductibleExpenses = 0,
+  rates = defaultTaxRates(),
+} = {}) {
   const kdvIncomeRate = num(rates.kdvIncome, 0);
+  const kdvRestaurantRate = num(rates.kdvRestaurant, kdvIncomeRate);
   const kdvExpenseRate = num(rates.kdvExpense, 0);
 
-  const collectedKdv = round2((revenue * kdvIncomeRate) / (100 + kdvIncomeRate));
+  // Konaklama ve restoran gelirleri ayrı oranlarla KDV üretir.
+  const roomKdv = round2((revenue * kdvIncomeRate) / (100 + kdvIncomeRate));
+  const restaurantKdv = round2((restaurantRevenue * kdvRestaurantRate) / (100 + kdvRestaurantRate));
+  const collectedKdv = round2(roomKdv + restaurantKdv);
+
   const kdvBase = expenseKdvBase == null ? expenses : expenseKdvBase;
   const deductibleKdv = round2((kdvBase * kdvExpenseRate) / (100 + kdvExpenseRate));
   const netKdv = round2(collectedKdv - deductibleKdv);
 
-  const netRevenue = round2(revenue - collectedKdv);
-  const accommodationTax = round2((netRevenue * num(rates.accommodationTax, 0)) / 100);
-  const tourismShare = round2((netRevenue * num(rates.tourismShare, 0)) / 100);
+  const roomNetRevenue = round2(revenue - roomKdv);
+  const restaurantNetRevenue = round2(restaurantRevenue - restaurantKdv);
+  const netRevenue = round2(roomNetRevenue + restaurantNetRevenue);
 
-  const netExpense = round2(kdvBase - deductibleKdv + (expenses - kdvBase));
+  // Konaklama vergisi ve turizm payı yalnızca konaklama geliri üzerinden alınır.
+  const accommodationTax = round2((roomNetRevenue * num(rates.accommodationTax, 0)) / 100);
+  const tourismShare = round2((roomNetRevenue * num(rates.tourismShare, 0)) / 100);
+
+  const netExpense = round2(expenses - deductibleKdv);
   const netProfit = round2(netRevenue - netExpense - accommodationTax - tourismShare);
-  const incomeTax = round2(Math.max(0, netProfit) * (num(rates.incomeTax, 0) / 100));
+
+  // Vergi matrahı: indirilemeyen giderler kâra geri eklenir (PRD v2 §3.1).
+  const taxBase = round2(netProfit + nonDeductibleExpenses);
+  const incomeTax = round2(Math.max(0, taxBase) * (num(rates.incomeTax, 0) / 100));
 
   return {
     rates: { ...rates },
     revenue: round2(revenue),
+    restaurantRevenue: round2(restaurantRevenue),
+    totalRevenue: round2(revenue + restaurantRevenue),
     expenses: round2(expenses),
+    nonDeductibleExpenses: round2(nonDeductibleExpenses),
+    roomKdv,
+    restaurantKdv,
     collectedKdv,
     deductibleKdv,
     /** Ödenecek net KDV = hesaplanan − indirilecek (negatifse devreden KDV). */
     netKdv,
     carriedKdv: netKdv < 0 ? round2(-netKdv) : 0,
     payableKdv: netKdv > 0 ? netKdv : 0,
+    roomNetRevenue,
+    restaurantNetRevenue,
     netRevenue,
     netExpense,
     accommodationTax,
     tourismShare,
     netProfit,
+    taxBase,
     incomeTax,
     netProfitAfterTax: round2(netProfit - incomeTax),
   };

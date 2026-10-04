@@ -123,6 +123,9 @@ input, select, textarea {
   padding: 9px 10px; font: inherit; width: 100%;
 }
 input[type="range"] { padding: 0; }
+/* Onay kutuları ve radyo düğmeleri yukarıdaki `width: 100%` kuralını almamalı;
+   aksi halde esnek kutularda yanlarındaki yazıya yer bırakmıyorlar. */
+input[type="checkbox"], input[type="radio"] { width: auto; flex: none; padding: 0; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 input.readonly, .readonly { background: var(--card-2); color: var(--muted); }
 input.count { max-width: 110px; }
@@ -277,7 +280,7 @@ input.count { max-width: 110px; }
 
 .fab { position: fixed; right: 26px; bottom: 26px; z-index: 40; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .fab-menu { display: none; flex-direction: column; gap: 6px; }
-.fab:hover .fab-menu, .fab:focus-within .fab-menu { display: flex; }
+.fab:hover .fab-menu, .fab:focus-within .fab-menu, .fab.open .fab-menu { display: flex; }
 .fab-btn {
   width: 56px; height: 56px; border-radius: 50%;
   background: var(--accent); color: #07101f; border: none;
@@ -542,7 +545,6 @@ table.calendar th, table.calendar td { border: none; padding: 2px; }
 
 /* ===================== Dinamik yazdırma (PRD §2.2) ===================== */
 
-.print-option { padding: 6px 2px; }
 @media print {
   .print-hidden { display: none !important; }
 }
@@ -582,3 +584,183 @@ table.calendar th, table.calendar td { border: none; padding: 2px; }
 }
 .kpi-link:hover { border-color: var(--accent); transform: translateY(-1px); }
 .kpi-link .swatch { display: inline-block; margin-right: 6px; vertical-align: middle; }
+
+/* ===================== PRD v2 · şifre alanı, sekmeler, ipuçları ===================== */
+
+.pw-wrap { position: relative; display: flex; align-items: center; }
+.pw-wrap input { padding-right: 44px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; font-size: 1rem;
+  padding: 6px 8px; border-radius: 8px; line-height: 1; color: var(--muted);
+}
+.pw-toggle:hover { background: var(--card-2); }
+
+.settings-tabs {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); padding-bottom: 10px;
+}
+.settings-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: transparent; border: 1px solid transparent; border-radius: 10px;
+  color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; padding: 9px 14px;
+}
+.settings-tab:hover { background: var(--card); color: var(--text); }
+.settings-tab.active { background: var(--accent-soft); border-color: var(--accent); color: #cfe0ff; }
+.dirty-badge { color: var(--warn); font-size: 0.82rem; font-weight: 600; }
+
+.fx-status { display: flex; flex-direction: column; gap: 10px; }
+.path-box {
+  display: block; background: var(--bg-soft); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; font-size: 0.85rem; word-break: break-all;
+}
+.code-block {
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; font-size: 0.78rem; overflow-x: auto; margin: 0; color: var(--muted);
+}
+
+/* §6.1 — fiyat bilgi balonu */
+.price-hint {
+  position: fixed; z-index: 90; pointer-events: none;
+  background: var(--card); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 12px 14px; box-shadow: var(--shadow); min-width: 240px;
+  opacity: 0; transition: opacity .12s ease;
+}
+.price-hint.show { opacity: 1; }
+.price-hint-title { font-size: 0.78rem; color: var(--muted); margin-bottom: 8px; }
+.price-hint-row {
+  display: flex; justify-content: space-between; gap: 16px;
+  font-size: 0.88rem; padding: 3px 0;
+}
+.price-hint-row strong { font-variant-numeric: tabular-nums; }
+.price-hint-foot { margin-top: 8px; font-size: 0.72rem; color: var(--muted); }
+
+/* ===================== Yazdırma seçenekleri — metin taşması ===================== */
+
+.print-option {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg-soft); line-height: 1.35;
+}
+.print-option:hover { border-color: var(--accent); }
+.print-option input { flex: none; width: auto; margin-top: 2px; }
+/* Etiket kalan genişliği alır ve uzun başlıklar satır sonunda kırılır.
+   `overflow-wrap: anywhere` kullanılmaz: esnek kutuda öğeyi tek harf
+   genişliğine indirip yazıları dikey bir şeride sıkıştırıyordu. */
+.print-option > span {
+  flex: 1 1 auto; min-width: 0;
+  white-space: normal; overflow-wrap: break-word; word-break: normal; hyphens: auto;
+}
+.modal-sm .print-option { font-size: 0.88rem; }
+
+.print-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+
+/* ===================== Mobil ve tablet uyumu ===================== */
+
+.menu-btn { display: none; }
+.sidebar-backdrop { display: none; }
+.sidebar-close { display: none; }
+
+/* Tablet: menü daralır, tablolar kaydırılabilir */
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 210px 1fr; }
+  .content { padding: 20px 18px 50px; }
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .split-2 { grid-template-columns: 1fr; }
+  /* Yalnızca kaydırılabilir kart içindeki geniş tablolar sabit genişlik alır;
+     kart içine gömülü özet tabloları (mini-table) sayfayı yatay taşırırdı. */
+  .table-card { overflow-x: auto; }
+  .table-card table { min-width: 620px; }
+  .mini-table { min-width: 0; }
+  .room-card { grid-template-columns: 1fr; }
+  .grid-3 { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+}
+
+/* Telefon: menü kayan panel olur */
+@media (max-width: 820px) {
+  .layout { grid-template-columns: 1fr; }
+
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 272px; z-index: 60;
+    transform: translateX(-100%); transition: transform .22s ease;
+    height: 100vh; overflow-y: auto;
+  }
+  /* Kayan panel içeriğin üstüne geldiği için saydam olmamalı. */
+  .sidebar { background: var(--card); }
+  .sidebar.open { transform: translateX(0); box-shadow: var(--shadow); }
+  .sidebar-close { display: inline-flex; margin-left: auto; }
+  .sidebar-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 55;
+    background: rgba(5, 8, 14, 0.6); opacity: 0; pointer-events: none; transition: opacity .2s ease;
+  }
+  .sidebar-backdrop.show { opacity: 1; pointer-events: auto; }
+  .menu-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 38px; font-size: 1.2rem;
+    background: var(--card-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+  }
+
+  .topbar { padding: 10px 14px; position: sticky; top: 0; }
+  /* Dönem düğmeleri satırlara bölünüp ekranı doldurmasın: tek sırada kaydırılır. */
+  .topbar .range-chips {
+    order: 3; flex: 1 1 100%; width: 100%; max-width: 100%; min-width: 0;
+    flex-wrap: nowrap; overflow-x: auto;
+    padding-bottom: 2px; scrollbar-width: thin;
+  }
+  .topbar .range-chips::-webkit-scrollbar { height: 3px; }
+  .range-chips .chip { white-space: nowrap; flex: none; }
+  /* Üst çubuktaki sarmalayıcılar daralabilmeli; aksi halde kaydırılabilir düğme
+     şeridi ana kutuyu genişletip sayfayı yatay kaydırıyor. */
+  .topbar .row { flex-wrap: wrap; min-width: 0; }
+  .topbar .row > * { min-width: 0; }
+
+  /* Açılır paneller ekran dışına taşmadan sığar. */
+  .popover { width: auto; min-width: 0; max-width: calc(100vw - 28px); }
+  .custom-range .popover { left: 0; right: auto; flex-direction: column; align-items: stretch; }
+  .custom-range .popover input { width: 100%; min-width: 0; }
+  .account-menu .popover { left: auto; right: 0; }
+  .mini-table { font-size: 0.8rem; }
+  .mini-table td, .mini-table th { padding: 5px 6px; }
+  .content { padding: 16px 14px 80px; }
+
+  h1 { font-size: 1.3rem; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpi strong { font-size: 1.05rem; }
+  .card { padding: 13px; }
+
+  .modal { max-width: 100%; }
+  .modal-backdrop { padding: 12px 8px; align-items: flex-end; }
+  .modal-sm, .modal-md, .modal-lg { max-width: 100%; border-radius: 16px 16px 0 0; }
+  .modal-body { padding: 14px; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .row.end { flex-wrap: wrap; }
+  .row.end .btn { flex: 1 1 auto; justify-content: center; }
+
+  .fab { right: 16px; bottom: 16px; }
+  /* Telefonda kısayollar ekranı kapatmasın: yalnızca düğmeye dokununca açılır. */
+  .fab:hover .fab-menu { display: none; }
+  .fab.open .fab-menu { display: flex; }
+  .settings-tabs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 8px; }
+  .settings-tab { white-space: nowrap; }
+  .print-options { grid-template-columns: 1fr; }
+  .account-chip span:not(.avatar):not(.pill) { display: none; }
+  /* Halka grafik açıklaması: dar ekranda tam satır olur, metin sığmazsa kırpılır. */
+  .legend { min-width: 0; width: 100%; flex: 1 1 100%; }
+  .legend-row { flex-wrap: wrap; }
+  .legend-row > span:nth-child(2) { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .legend-row .right { margin-left: auto; }
+  .bar-list-row { grid-template-columns: 1fr; gap: 2px; }
+  .bar-list-value { text-align: left; }
+  .calendar-wrap { max-height: 70vh; }
+  .price-hint { min-width: 200px; max-width: calc(100vw - 24px); }
+  .supplier-balance { text-align: left; }
+  .login-card { padding: 20px; }
+}
+
+/* Dokunmatik cihazlarda hedefler büyür */
+@media (pointer: coarse) {
+  .btn, .nav-item, .nav-group, .settings-tab { min-height: 42px; }
+  .icon-btn { min-width: 38px; min-height: 38px; }
+  .cal-cell { min-height: 42px; }
+}

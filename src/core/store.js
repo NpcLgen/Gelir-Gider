@@ -17,6 +17,7 @@ const emptyState = () => ({
   rooms: [], reservations: [], expenses: [], prices: {},
   settings: { ...defaultSettings(), tax: defaultTaxRates(), bills: [] },
   employees: [], extraWorkers: [], suppliers: [], supplierTxns: [], cashDays: [],
+  restaurantIncomes: [], restaurantExpenses: [], foreignWorkers: [],
   users: [], auditLog: [], modules: [], me: null,
 });
 
@@ -88,6 +89,16 @@ export async function createStore() {
     saveSupplierTxn: (patch) => mutate(() => api.post('/api/supplierTxns', patch)),
     deleteSupplierTxn: (id) => mutate(() => api.del(`/api/supplierTxns/${id}`)),
 
+    /* --- Restoran (PRD v2 §2) --- */
+    saveRestaurantIncome: (patch) => mutate(() => api.post('/api/restaurantIncomes', patch)),
+    deleteRestaurantIncome: (id) => mutate(() => api.del(`/api/restaurantIncomes/${id}`)),
+    saveRestaurantExpense: (patch) => mutate(() => api.post('/api/restaurantExpenses', patch)),
+    deleteRestaurantExpense: (id) => mutate(() => api.del(`/api/restaurantExpenses/${id}`)),
+
+    /* --- Yabancı çalışanlar (PRD v2 §3.1) --- */
+    saveForeignWorker: (patch) => mutate(() => api.post('/api/foreignWorkers', patch)),
+    deleteForeignWorker: (id) => mutate(() => api.del(`/api/foreignWorkers/${id}`)),
+
     /* --- Kasa --- */
     saveCashDay: (patch) => mutate(() => api.post('/api/cashDays', patch)),
     deleteCashDay: (id) => mutate(() => api.del(`/api/cashDays/${id}`)),
@@ -113,6 +124,8 @@ export async function createStore() {
     },
     setDisplayCurrency: (currency) => mutate(() => api.put('/api/settings', { displayCurrency: currency })),
     saveFx: (patch) => mutate(() => api.put('/api/settings', { fx: { ...state.settings.fx, ...patch } })),
+    /** Kuru sunucu üzerinden kaynaktan çeker (PRD v2 §4.1). */
+    refreshFx: (currency, source) => mutate(() => api.post('/api/fx/refresh', { currency, source })),
     recordRate: (date, rate) => mutate(() => api.put('/api/settings', {
       fx: {
         ...state.settings.fx, rate, updatedAt: new Date().toISOString(),

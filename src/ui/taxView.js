@@ -1,6 +1,6 @@
 /** Vergi Raporu — KDV, konaklama vergisi, turizm payı ve gelir vergisi (PRD §5.1). */
 
-import { defaultTaxRates, employeeTotal, taxReport } from '../core/finance.js';
+import { defaultTaxRates, employeeTotal, restaurantIncomeSummary, taxReport } from '../core/finance.js';
 import { formatMoney, formatPercent } from '../core/format.js';
 import { clear, errorList, field, h, toast } from './dom.js';
 
@@ -13,11 +13,11 @@ export function taxInputs(app) {
   const state = app.store.getState();
   const report = app.report();
   const p = app.period();
+  const rates = { ...defaultTaxRates(), ...(state.settings.tax ?? {}) };
 
   const supplierInvoices = state.supplierTxns.filter((t) => t.active !== false
     && t.type === 'invoice' && t.date >= p.from && t.date <= p.to);
   const supplierTotal = supplierInvoices.reduce((sum, t) => sum + t.amount, 0);
-  const supplierKdv = supplierInvoices.reduce((sum, t) => sum + (t.amount * t.kdvRate) / (100 + t.kdvRate), 0);
 
   const month = p.from.slice(0, 7);
   const payroll = state.employees
@@ -26,19 +26,39 @@ export function taxInputs(app) {
     + state.extraWorkers.filter((w) => w.active !== false && w.date >= p.from && w.date <= p.to)
       .reduce((sum, w) => sum + w.amount, 0);
 
-  // Belgeli giderler: dönemdeki gider kalemlerinin tedarikçisi olanlar.
+  // PRD v2 §3.1 — yabancı çalışan maaşları gidere girer; matrahta ayrı değerlendirilir.
+  const foreignPayroll = state.foreignWorkers
+    .filter((w) => w.active !== false && w.period === month)
+    .reduce((sum, w) => sum + w.amount, 0);
+  const foreignDeductible = rates.foreignStaffDeductible === true;
+
+  const restaurantExpenses = state.restaurantExpenses
+    .filter((e) => e.active !== false && e.date >= p.from && e.date <= p.to)
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  const restaurant = restaurantIncomeSummary(state.restaurantIncomes, {
+    from: p.from, to: p.to, kdvRate: rates.kdvRestaurant ?? 10,
+  });
+
+  // Belgeli giderler: tedarikçisi olan kalemler + toptancı faturaları + restoran harcamaları.
   const documented = report.expenses
     .filter((e) => e.vendor)
     .reduce((sum, e) => sum + e.amountBase, 0);
 
+  const round = (n) => Math.round(n * 100) / 100;
+
   return {
     revenue: report.totals.revenue,
-    expensesTotal: Math.round((report.totals.expenses + payroll + supplierTotal) * 100) / 100,
-    payroll: Math.round(payroll * 100) / 100,
-    supplierTotal: Math.round(supplierTotal * 100) / 100,
-    supplierKdv: Math.round(supplierKdv * 100) / 100,
-    documented: Math.round(documented * 100) / 100,
-    kdvBase: Math.round((documented + supplierTotal) * 100) / 100,
+    restaurantRevenue: restaurant.gross,
+    restaurantKdv: restaurant.kdv,
+    expensesTotal: round(report.totals.expenses + payroll + foreignPayroll + supplierTotal + restaurantExpenses),
+    payroll: round(payroll),
+    foreignPayroll: round(foreignPayroll),
+    nonDeductible: foreignDeductible ? 0 : round(foreignPayroll),
+    supplierTotal: round(supplierTotal),
+    restaurantExpenses: round(restaurantExpenses),
+    documented: round(documented),
+    kdvBase: round(documented + supplierTotal + restaurantExpenses),
   };
 }
 
@@ -50,8 +70,10 @@ export function taxView(app) {
 
   const report = taxReport({
     revenue: inputs.revenue,
+    restaurantRevenue: inputs.restaurantRevenue,
     expenses: inputs.expensesTotal,
     expenseKdvBase: inputs.kdvBase,
+    nonDeductibleExpenses: inputs.nonDeductible,
     rates,
   });
 
@@ -68,7 +90,7 @@ export function taxView(app) {
       }, '🖨️ Yazdır')),
 
     h('div', { class: 'kpi-grid' },
-      kpi('Hesaplanan KDV', formatMoney(report.collectedKdv), `Gelir üzerinden %${rates.kdvIncome}`),
+      kpi('Hesaplanan KDV', formatMoney(report.collectedKdv), `Konaklama %${rates.kdvIncome} · restoran %${rates.kdvRestaurant}`),
       kpi('İndirilecek KDV', formatMoney(report.deductibleKdv), `Belgeli gider üzerinden %${rates.kdvExpense}`),
       kpi(report.netKdv >= 0 ? 'Ödenecek Net KDV' : 'Devreden KDV',
         formatMoney(Math.abs(report.netKdv)),
@@ -82,25 +104,37 @@ export function taxView(app) {
           h('th', {}, 'Vergi Kalemi'), h('th', {}, 'Matrah / Açıklama'),
           h('th', { class: 'num' }, 'Oran'), h('th', { class: 'num' }, 'Tutar'))),
         h('tbody', {},
-          taxRow('KDV (hesaplanan)', 'Konaklama geliri (KDV dahil)', `%${rates.kdvIncome}`, report.collectedKdv),
+          taxRow('KDV (konaklama)', 'Oda geliri (KDV dahil)', `%${rates.kdvIncome}`, report.roomKdv),
+          taxRow('KDV (restoran)', 'Restoran geliri (KDV dahil)', `%${rates.kdvRestaurant}`, report.restaurantKdv),
+          taxRow('KDV (hesaplanan toplam)', 'Konaklama + restoran', '—', report.collectedKdv, true),
           taxRow('KDV (indirilecek)', 'Belgeli gider ve toptancı faturaları', `%${rates.kdvExpense}`, -report.deductibleKdv),
           taxRow(report.netKdv >= 0 ? 'Ödenecek Net KDV' : 'Devreden KDV', 'Hesaplanan − İndirilecek', '—', report.netKdv, true),
           taxRow('Konaklama Vergisi', 'KDV hariç konaklama geliri', `%${rates.accommodationTax}`, report.accommodationTax),
           taxRow('Turizm Payı', 'KDV hariç konaklama geliri', `%${rates.tourismShare}`, report.tourismShare),
           taxRow('Net Kâr', 'KDV hariç gelir − gider − konaklama v. − turizm payı', '—', report.netProfit, true),
-          taxRow('Gelir / Kurumlar Vergisi', 'Net kâr üzerinden', `%${rates.incomeTax}`, report.incomeTax),
+          report.nonDeductibleExpenses > 0
+            ? taxRow('İndirilemeyen Gider (matraha eklenen)', 'Yabancı çalışan maaşları', '—', report.nonDeductibleExpenses)
+            : null,
+          taxRow('Vergi Matrahı', 'Net kâr + indirilemeyen giderler', '—', report.taxBase, true),
+          taxRow('Gelir / Kurumlar Vergisi', 'Vergi matrahı üzerinden', `%${rates.incomeTax}`, report.incomeTax),
           taxRow('Vergi Sonrası Net Kâr', 'Tüm vergiler düşüldükten sonra', '—', report.netProfitAfterTax, true)))),
 
     h('section', { class: 'card stack' },
       h('h3', {}, 'Hesaplamaya Giren Tutarlar'),
       h('div', { class: 'kv-list' },
         kv('Konaklama geliri (KDV dahil)', formatMoney(inputs.revenue)),
+        kv('Restoran geliri (KDV dahil)', formatMoney(inputs.restaurantRevenue)),
         kv('Toplam gider', formatMoney(inputs.expensesTotal)),
         kv('— personel ve ekstra çalışan', formatMoney(inputs.payroll)),
+        kv('— yabancı çalışan', formatMoney(inputs.foreignPayroll)),
         kv('— toptancı faturaları', formatMoney(inputs.supplierTotal)),
+        kv('— restoran ekstra giderleri', formatMoney(inputs.restaurantExpenses)),
         kv('KDV indirimine esas belgeli gider', formatMoney(inputs.kdvBase))),
       h('p', { class: 'muted small' },
-        'Personel ödemeleri KDV doğurmadığı için indirilecek KDV matrahına dahil edilmez.')),
+        'Personel ödemeleri KDV doğurmadığı için indirilecek KDV matrahına dahil edilmez. ' +
+        (inputs.nonDeductible > 0
+          ? 'Yabancı çalışan maaşları gidere dahildir ancak vergi matrahından indirilmez.'
+          : 'Yabancı çalışan maaşları şu an indirilebilir gider olarak sayılıyor.'))),
 
     canEdit ? rateEditor(app, rates) : h('p', { class: 'muted small no-print' },
       'Vergi oranlarını değiştirmek için "Ayarlar" yetkisi gerekir.'));

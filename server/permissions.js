@@ -12,10 +12,13 @@ export const MODULES = [
   { key: 'giderler', label: 'Giderler', group: 'Giderler' },
   { key: 'calisanlar', label: 'Çalışanlar', group: 'Giderler' },
   { key: 'ekstraCalisan', label: 'Ekstra Çalışan', group: 'Giderler' },
+  { key: 'yabanciCalisanlar', label: 'Yabancı Çalışanlar', group: 'Giderler' },
   { key: 'genelHarcamalar', label: 'Genel Harcamalar', group: 'Giderler' },
   { key: 'vergiler', label: 'Vergiler', group: 'Giderler' },
 
   { key: 'restoran', label: 'Restoran', group: 'Restoran' },
+  { key: 'restoranGelir', label: 'Restoran Gelirleri', group: 'Restoran' },
+  { key: 'restoranGider', label: 'Restoran Ekstra Giderler', group: 'Restoran' },
   { key: 'toptancilar', label: 'Toptancılar', group: 'Restoran' },
 
   { key: 'kasa', label: 'Kasa / Gün Sonu', group: 'Kasa' },
@@ -27,6 +30,7 @@ export const MODULES = [
 
   { key: 'ayarlar', label: 'Ayarlar', group: 'Yönetim' },
   { key: 'kullaniciYonetimi', label: 'Kullanıcı Yönetimi', group: 'Yönetim' },
+  { key: 'yedekleme', label: 'Yedekleme ve Geri Yükleme', group: 'Yönetim' },
 ];
 
 export const MODULE_KEYS = MODULES.map((m) => m.key);

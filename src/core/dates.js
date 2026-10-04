@@ -77,7 +77,16 @@ export function quickRange(key, today = new Date()) {
   const y = today.getUTCFullYear();
   const m = today.getUTCMonth() + 1;
   const mk = `${y}-${String(m).padStart(2, '0')}`;
+  const todayIso = today.toISOString().slice(0, 10);
   switch (key) {
+    case 'today': return period(todayIso, todayIso);
+    case 'thisWeek': {
+      // Hafta Pazartesi başlar.
+      const weekday = (today.getUTCDay() + 6) % 7;
+      const monday = addDays(todayIso, -weekday);
+      return period(monday, addDays(monday, 6));
+    }
+    case 'thisYear': return period(`${y}-01-01`, `${y}-12-31`);
     case 'lastMonth': return monthPeriod(shiftMonth(mk, -1));
     case 'thisQuarter': {
       const first = Math.floor((m - 1) / 3) * 3 + 1;

@@ -6,8 +6,10 @@ import { readFile, stat } from 'node:fs/promises';
 import nodePath, { extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { handleApi } from '../server/api.js';
+import { handleApi, setAutoBackupApplier } from '../server/api.js';
 import { DEFAULT_ADMIN, ensureDefaultAdmin } from '../server/auth.js';
+import { BACKUP_DIR, startAutoBackup } from '../server/backup.js';
+import { load } from '../server/db.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT || 5173);
@@ -112,6 +114,18 @@ export async function start() {
   // Kurulumda varsayılan Admin hesabı oluşturulur (PRD §7).
   const admin = await ensureDefaultAdmin();
 
+  // Otomatik yedekleme: ayarlardaki aralıkla çalışır, açılışta bir kez yedek alır.
+  const applyAutoBackup = (backupSettings) => {
+    const config = backupSettings ?? { autoEnabled: true, intervalHours: 24, keep: 20 };
+    startAutoBackup({
+      intervalHours: config.autoEnabled === false ? 0 : config.intervalHours,
+      keep: config.keep,
+      onBackup: (info) => console.log(`  Otomatik yedek alındı: ${info.name}`),
+    });
+  };
+  setAutoBackupApplier(applyAutoBackup);
+  applyAutoBackup((await load()).settings?.backup);
+
   const server = createStaticServer();
   const MAX_TRIES = 20;
   let attempt = 0;
@@ -139,6 +153,7 @@ export async function start() {
     console.log(`      http://127.0.0.1:${actual}`);
     console.log('');
     console.log(`  Klasör: ${root}`);
+    console.log(`  Yedekler: ${BACKUP_DIR}`);
     if (admin) {
       console.log('');
       console.log('  İlk kurulum: varsayılan yönetici hesabı oluşturuldu');

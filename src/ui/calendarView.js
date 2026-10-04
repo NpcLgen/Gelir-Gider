@@ -57,6 +57,11 @@ export function calendarView(app) {
             class: classes.join(' '), type: 'button',
             title: cellTitle({ date, booked, filled, verdict, pricing, present }),
             onClick: () => openPriceEditor(app, room, date, entry),
+            // PRD v2 §6.1 — fiyatı girilmemiş günde tavsiye ve maliyet balonu.
+            onMouseenter: filled || !pricing ? undefined : (e) => showPriceHint(e.currentTarget, room, date, pricing, present),
+            onMouseleave: filled || !pricing ? undefined : hidePriceHint,
+            onFocus: filled || !pricing ? undefined : (e) => showPriceHint(e.currentTarget, room, date, pricing, present),
+            onBlur: filled || !pricing ? undefined : hidePriceHint,
           },
             filled ? present.money(base) : '—',
             verdict === 'loss' ? h('span', { class: 'cal-warn' }, '⚠') : null,
@@ -100,6 +105,46 @@ export function calendarView(app) {
 }
 
 const baseOf = (entry, present) => (entry.currency === 'EUR' ? entry.amount * present.rate : entry.amount);
+
+/* ---------------------------- §6.1 Fiyat bilgi balonu --------------------- */
+
+let hintEl = null;
+
+/**
+ * Fiyatı girilmemiş hücrede tavsiye edilen satış fiyatı (yeşil) ve ortalama oda
+ * maliyetini (kırmızı) gösterir. Dokunmatik cihazlarda dokunma ile de açılır.
+ */
+export function showPriceHint(target, room, date, pricing, present) {
+  hidePriceHint();
+  // Veri yoksa tahmini rakam gösterilmez.
+  if (!pricing || !(pricing.recommended > 0)) return;
+
+  const cost = pricing.costPerSoldNight ?? pricing.breakEven;
+  hintEl = h('div', { class: 'price-hint', role: 'tooltip' },
+    h('div', { class: 'price-hint-title' }, `${roomLabel(room)} · ${date}`),
+    h('div', { class: 'price-hint-row' },
+      h('span', {}, 'Tavsiye Edilen Satış Fiyatı'),
+      h('strong', { class: 'good' }, present.money(pricing.recommended))),
+    h('div', { class: 'price-hint-row' },
+      h('span', {}, 'Ortalama Oda Maliyeti'),
+      h('strong', { class: 'bad' }, present.money(cost))),
+    h('div', { class: 'price-hint-foot' }, 'Fiyat girmek için tıklayın'));
+
+  document.body.appendChild(hintEl);
+  const rect = target.getBoundingClientRect();
+  const box = hintEl.getBoundingClientRect();
+  // Ekran dışına taşmayacak biçimde konumlandır.
+  const left = Math.min(Math.max(8, rect.left + rect.width / 2 - box.width / 2), window.innerWidth - box.width - 8);
+  const top = rect.top - box.height - 10 < 8 ? rect.bottom + 10 : rect.top - box.height - 10;
+  hintEl.style.left = `${left}px`;
+  hintEl.style.top = `${top}px`;
+  hintEl.classList.add('show');
+}
+
+export function hidePriceHint() {
+  hintEl?.remove();
+  hintEl = null;
+}
 
 const VERDICT_TEXT = {
   loss: 'ALT LİMİTİN ALTINDA — bu fiyatla satılan her gece doğrudan zarar',

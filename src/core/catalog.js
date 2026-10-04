@@ -181,9 +181,12 @@ export const WRITE_OFF_CATEGORIES = ['writeOff'];
 
 /** PRD §7.1 — hızlı tarih seçici butonları. */
 export const QUICK_RANGES = [
+  { key: 'today', label: 'Bugün' },
+  { key: 'thisWeek', label: 'Bu Hafta' },
   { key: 'thisMonth', label: 'Bu Ay' },
   { key: 'lastMonth', label: 'Geçen Ay' },
   { key: 'thisQuarter', label: 'Bu Çeyrek' },
+  { key: 'thisYear', label: 'Bu Yıl' },
   { key: 'ytd', label: 'YTD' },
   { key: 'sameMonthLastYear', label: 'Geçen Yılın Aynı Ayı' },
 ];
