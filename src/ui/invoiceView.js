@@ -14,7 +14,7 @@ import { invoiceAmount, invoiceKdv, invoiceSummary } from '../core/finance.js';
 import { rateFor } from '../core/fx.js';
 import { formatDate, formatMoney } from '../core/format.js';
 import { clear, confirmDialog, errorList, field, h, openModal, select, toast } from './dom.js';
-import { importResult } from './excelView.js';
+import { importResult, importToast } from './excelView.js';
 
 /** İki sayfanın yalnızca etiket ve depo adlarıyla ayrıştığı tanım. */
 const KINDS = {
@@ -88,10 +88,11 @@ function invoiceView(app, direction) {
         { kind: kind.templateKind, dryRun: dryRun ? '1' : '0' });
       renderResult();
       if (dryRun) {
-        toast('Ön kontrol tamamlandı.');
+        toast(`Ön kontrol: ${importToast(local.lastResult, 'fatura')}`,
+          local.lastResult.invalidCount || local.lastResult.conflictCount ? 'warn' : 'ok');
       } else {
         await app.store.reload();
-        toast(`${local.lastResult.imported} fatura içe aktarıldı.`);
+        toast(importToast(local.lastResult, 'fatura'), local.lastResult.imported ? 'ok' : 'warn');
         app.refresh();
       }
     } catch (err) {

@@ -44,8 +44,8 @@ cmd /c npm start
 ## Testler
 
 ```bash
-npm test                    # 150 birim ve API testi (node:test, bağımlılıksız)
-npm run test:browser        # 93 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
+npm test                    # 158 birim ve API testi (node:test, bağımlılıksız)
+npm run test:browser        # 95 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 npm run test:browser:v2     # yalnızca PRD v2.0 akışları (restoran, kur, yedek, mobil)
 npm run test:browser:fatura # yalnızca gelen/giden fatura akışı
 ```
@@ -129,8 +129,14 @@ Vergiler Dahil Toplam Tutar**. Örnek şablonun başlıkları da birebir bunlard
 sayfadaki **❓ Örnek Şablon** düğmesinden indirilir.
 
 Hesaplamalarda "Vergiler Dahil Toplam Tutar" kullanılır; KDV, dahil ve hariç tutarın
-farkından alınır. Aynı fatura numarası ikinci kez yüklenemez. "📂 Excel Kontrol Et" ile
-önce deneme yapabilirsiniz: kayıt eklenmez, yalnızca hatalı satırlar listelenir.
+farkından alınır.
+
+**Aynı dosyayı tekrar yükleyebilirsiniz.** Daha önce işlenmiş bir fatura (aynı fatura no
+ve aynı bilgiler) ikinci kez işlenmez, "atlandı" olarak raporlanır; yalnızca yeni satırlar
+eklenir. Aynı numara farklı tutarla gelirse mevcut kayıt korunur ve satır çakışma olarak
+listelenir. Aynı koruma gider ve rezervasyon aktarımlarında da çalışır. "📂 Excel Kontrol Et"
+ile önce deneme yapabilirsiniz: kayıt eklenmez, hangi satırların yeni / atlanacak / çakışan /
+hatalı olduğu önceden listelenir.
 
 ## Telefon, tablet ve tarayıcı uyumu
 

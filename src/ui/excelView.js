@@ -6,6 +6,17 @@ import { clear, h, openModal, toast } from './dom.js';
 
 const state = { kind: 'gider', lastResult: null };
 
+/** İçe aktarım sonucunu tek cümlelik bildirime çevirir. */
+export function importToast(result, birim = 'kayıt') {
+  const parcalar = [];
+  if (result.imported) parcalar.push(`${result.imported} yeni ${birim} aktarıldı`);
+  if (result.skippedCount) parcalar.push(`${result.skippedCount} ${birim} zaten işlenmişti`);
+  if (result.conflictCount) parcalar.push(`${result.conflictCount} çakışma`);
+  if (result.invalidCount) parcalar.push(`${result.invalidCount} satır reddedildi`);
+  if (!parcalar.length) return 'İşlenecek yeni kayıt bulunamadı.';
+  return `${parcalar.join(' · ')}.`;
+}
+
 export function excelView(app) {
   const p = app.period();
   const canImport = app.can('excelIceAktarim');
@@ -25,12 +36,13 @@ export function excelView(app) {
       const buffer = await file.arrayBuffer();
       state.lastResult = await api.postRaw('/api/excel/import', buffer, { kind: state.kind, dryRun: dryRun ? '1' : '0' });
       renderResult();
-      if (!dryRun && state.lastResult.imported) {
+      if (dryRun) {
+        toast(`Ön kontrol: ${importToast(state.lastResult)}`,
+          state.lastResult.invalidCount || state.lastResult.conflictCount ? 'warn' : 'ok');
+      } else {
         await app.store.reload();
-        toast(`${state.lastResult.imported} kayıt içe aktarıldı.`);
+        toast(importToast(state.lastResult), state.lastResult.imported ? 'ok' : 'warn');
         app.refresh();
-      } else if (dryRun) {
-        toast('Ön kontrol tamamlandı.');
       }
     } catch (err) {
       state.lastResult = { error: err.message, ...(err.payload ?? {}) };
@@ -172,20 +184,40 @@ export function importResult(result) {
         : null);
   }
 
-  const tone = result.invalidCount ? 'warn' : 'ok';
+  const skipped = result.skippedCount ?? 0;
+  const conflicts = result.conflictCount ?? 0;
+  const problem = result.invalidCount > 0 || conflicts > 0;
+
+  // Özet: yeni kayıt / zaten işlenmiş / çakışan / hatalı.
+  const parts = [];
+  parts.push(result.dryRun
+    ? `${result.validCount} yeni kayıt`
+    : `${result.imported} kayıt aktarıldı`);
+  if (skipped) parts.push(`${skipped} kayıt zaten işlenmişti (atlandı)`);
+  if (conflicts) parts.push(`${conflicts} çakışma`);
+  if (result.invalidCount) parts.push(`${result.invalidCount} hatalı satır`);
+
+  /** Satır listesi tablosu. */
+  const rowTable = (title, rows, cls) => h('div', { class: 'card table-card' },
+    h('header', { class: 'card-header' }, h('h4', {}, title)),
+    h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Satır'), h('th', {}, 'Sebep'), h('th', {}, 'İçerik'))),
+      h('tbody', {}, ...rows.map((row) => h('tr', {},
+        h('td', {}, String(row.line)),
+        h('td', { class: `${cls} small` }, row.reason ?? row.errors.join(' · ')),
+        h('td', { class: 'muted small' }, row.raw.join(' | ')))))));
+
   return h('div', { class: 'stack tight' },
-    h('div', { class: `verdict verdict-${tone === 'ok' ? 'ok' : 'below'}` },
-      h('strong', {}, result.dryRun
-        ? `Ön kontrol: ${result.validCount} geçerli, ${result.invalidCount} hatalı satır`
-        : `${result.imported} kayıt aktarıldı, ${result.invalidCount} satır reddedildi`),
+    h('div', { class: `verdict verdict-${problem ? 'below' : 'ok'}` },
+      h('strong', {}, (result.dryRun ? 'Ön kontrol: ' : '') + parts.join(' · ')),
       h('span', { class: 'small' }, `Toplam ${result.totalRows} satır okundu.`)),
-    result.invalidRows?.length
-      ? h('div', { class: 'card table-card' },
-        h('table', {},
-          h('thead', {}, h('tr', {}, h('th', {}, 'Satır'), h('th', {}, 'Hata'), h('th', {}, 'İçerik'))),
-          h('tbody', {}, ...result.invalidRows.map((row) => h('tr', {},
-            h('td', {}, String(row.line)),
-            h('td', { class: 'bad small' }, row.errors.join(' · ')),
-            h('td', { class: 'muted small' }, row.raw.join(' | ')))))))
+    result.invalidRows?.length ? rowTable('Reddedilen satırlar', result.invalidRows, 'bad') : null,
+    result.conflictRows?.length
+      ? rowTable('Aynı kayıt farklı bilgilerle duruyor', result.conflictRows, 'warn')
+      : null,
+    result.skippedRows?.length
+      ? h('details', { class: 'card' },
+        h('summary', { class: 'muted small' }, `${skipped} kayıt daha önce işlendiği için atlandı — listeyi göster`),
+        rowTable('Atlanan satırlar', result.skippedRows, 'muted'))
       : null);
 }

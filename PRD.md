@@ -2,7 +2,7 @@
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 2.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 150 birim/API testi (`npm test`) + 93 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 158 birim/API testi (`npm test`) + 95 adımlı tarayıcı akış testi (`npm run test:browser`).
 **Sürüm 2.0 teslim listesi:** 18/18 madde tamamlandı — bkz. [§12](#12-sürüm-20-teslim-listesi-1818).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
@@ -778,8 +778,8 @@ okur, diğerlerini yok sayar. Sütun sırası önemli değildir, başlık adı e
 
 | Kural | Davranış |
 | --- | --- |
-| Önce kontrol | "📂 Excel Kontrol Et" kayıt eklemez, yalnızca geçerli/hatalı satırları listeler |
-| Mükerrer fatura | Aynı fatura no ikinci kez yüklenemez (aynı dosyadaki tekrar da reddedilir) |
+| Önce kontrol | "📂 Excel Kontrol Et" kayıt eklemez; hangi satırların yeni, atlanacak, çakışan veya hatalı olduğunu önceden listeler |
+| **Daha önce işlenmiş kayıt** | Aynı fatura no **ve** aynı bilgiler zaten varsa satır **tekrar işlenmez**, "atlandı" olarak raporlanır (bkz. §17.6) |
 | Hatalı satır | Diğer satırlar aktarılır; hatalılar satır numarası, sebep ve ham içerikle listelenir |
 | Eksik sütun | Dosya hiç işlenmez; eksik ve beklenen sütunlar ekranda gösterilir |
 | Pasife alma | Kayıt silinmeden `Aktif` kutusu kapatılarak toplamlardan çıkarılabilir |
@@ -815,7 +815,45 @@ referansını (`r="I2"`) esas alır ve boş hücreleri yerinde bırakır.
 | F6 | Ön kontrol kayıt eklemez | `ön kontrol (dryRun) kayıt eklemez` |
 | F7 | EUR tutarlar kurla çevrilir | `fatura özeti EUR tutarları kurla çevirir` |
 | F8 | Fatura KDV'si vergi raporuna girer | `faturaların KDV’si vergi raporuna gerçek tutarıyla girer` |
-| F9 | Arayüzde uçtan uca çalışır | tarayıcı: `test/browser/fatura.mjs` (13 adım) |
+| F9 | Arayüzde uçtan uca çalışır | tarayıcı: `test/browser/fatura.mjs` (15 adım) |
+
+### 17.6. Mükerrer aktarım koruması
+
+Aynı dosya ikinci kez yüklendiğinde hiçbir kayıt tekrar işlenmez. Her satır üç
+kovadan birine düşer:
+
+| Durum | Koşul | Sonuç |
+| --- | --- | --- |
+| **Yeni** | Anahtar daha önce görülmedi | Kaydedilir |
+| **Atlandı** | Anahtar var **ve** bilgiler birebir aynı | Sessizce geçilir; hata sayılmaz |
+| **Çakışma** | Anahtar var ama bilgiler değişmiş | Kaydedilmez, mevcut kayıt korunur, uyarı olarak listelenir |
+
+Anahtar ve "bilgiler" tanımı içe aktarım türüne göre değişir:
+
+| Tür | Anahtar | Karşılaştırılan bilgiler |
+| --- | --- | --- |
+| Gelen / giden fatura | Fatura No (büyük-küçük harf duyarsız) | Müşteri · Fatura tarihi · Para birimi · Vergiler hariç ve dahil tutarlar |
+| Gider | Tarih + açıklama + kategori | Tutar · Para birimi |
+| Rezervasyon | Oda + giriş + çıkış + misafir adı | Tutar · Para birimi |
+
+* Gelen ve giden faturalar ayrı defterlerdir; aynı numara ikisinde de bulunabilir.
+* Aynı dosya içinde tekrar eden satır da yalnızca bir kez işlenir.
+* Ön kontrol (dryRun) bu kovaları aktarımdan **önce** gösterir.
+* Bildirim ve özet metni sayıları birlikte verir:
+  `12 yeni fatura aktarıldı · 6 fatura zaten işlenmişti · 1 çakışma.`
+* Denetim kaydına da aynı kırılım yazılır.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| M1 | Aynı dosya ikinci kez kayıt üretmez | `aynı dosya ikinci kez yüklenince hiçbir satır tekrar işlenmez` |
+| M2 | Yalnızca yeni satırlar işlenir | `dosyanın yarısı yeniyse yalnızca yeni satırlar işlenir` |
+| M3 | Atlanan satır hata sayılmaz | `aynı dosya ikinci kez yüklenince hiçbir satır tekrar işlenmez` |
+| M4 | Bilgi değişmişse mevcut kayıt korunur | `aynı numara farklı bilgiyle gelirse çakışma bildirilir, kayıt değişmez` |
+| M5 | Aynı dosyadaki tekrar da atlanır | `aynı dosyadaki mükerrer satır ikinci kez işlenmez` |
+| M6 | Büyük/küçük harf farkı mükerrerdir | `fatura no büyük/küçük harf farkıyla da mükerrer sayılır` |
+| M7 | Gider aktarımı da tekrarlanmaz | `aynı gider dosyası ikinci kez yüklenince kayıt çoğalmaz` |
+| M8 | Rezervasyon aktarımı da tekrarlanmaz | `aynı rezervasyon dosyası ikinci kez yüklenince hata değil atlama üretir` |
+| M9 | Arayüzde doğrulanır | tarayıcı: `Daha önce işlenmiş faturalar tekrar işlenmiyor` |
 
 ---
 

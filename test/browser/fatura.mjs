@@ -145,7 +145,7 @@ await step('Giden fatura dosyası gelir faturalarına aktarılıyor', async () =
   await go('Gelirler');
   await clearToast();
   await page.setInputFiles('input.invoice-import', GIDEN);
-  await waitToast('fatura içe aktarıldı');
+  await waitToast('2 yeni fatura aktarıldı');
   const table = await page.textContent('.table-card');
   if (!table.includes('SCA-TEST-1') || !table.includes('Li JiaNi')) throw new Error('faturalar listeye girmedi');
   const total = money(await page.textContent('.kpi:has-text("Dönem Gelir Faturası") strong'));
@@ -153,14 +153,30 @@ await step('Giden fatura dosyası gelir faturalarına aktarılıyor', async () =
   console.log(`   2 fatura · toplam ₺${total}`);
 });
 
-await step('Aynı dosya ikinci kez aktarılmıyor', async () => {
+await step('Daha önce işlenmiş faturalar tekrar işlenmiyor', async () => {
   await clearToast();
   await page.setInputFiles('input.invoice-dry', GIDEN);
   await page.waitForSelector('.verdict');
-  const verdict = await page.textContent('.verdict');
-  if (!/0 geçerli, 2 hatalı/.test(verdict)) throw new Error(verdict.replace(/\s+/g, ' '));
-  const hata = await page.textContent('.table-card:has-text("Satır") tbody');
-  if (!hata.includes('zaten kayıtlı')) throw new Error('mükerrer uyarısı yok');
+  const verdict = (await page.textContent('.verdict')).replace(/\s+/g, ' ');
+  if (!/0 yeni kayıt/.test(verdict)) throw new Error(verdict);
+  if (!/2 kayıt zaten işlenmişti \(atlandı\)/.test(verdict)) throw new Error(verdict);
+  if (/hatalı satır/.test(verdict)) throw new Error(`atlanan satır hata sayılıyor: ${verdict}`);
+  console.log(`   ${verdict.trim()}`);
+
+  // Gerçek aktarımda da kayıt çoğalmamalı.
+  const before = await page.$$eval('.table-card tbody tr', (els) => els.length);
+  await clearToast();
+  await page.setInputFiles('input.invoice-import', GIDEN);
+  await waitToast('2 fatura zaten işlenmişti');
+  const after = await page.$$eval('.table-card tbody tr', (els) => els.length);
+  if (after !== before) throw new Error(`satır sayısı değişti: ${before} → ${after}`);
+});
+
+await step('Atlanan satırların listesi istenirse açılıyor', async () => {
+  await page.click('details:has-text("daha önce işlendiği için atlandı") summary');
+  await page.waitForTimeout(300);
+  const detay = await page.textContent('details:has-text("daha önce işlendiği")');
+  if (!detay.includes('zaten kayıtlı; tekrar işlenmedi')) throw new Error('atlama sebebi görünmüyor');
 });
 
 /* -------------------------------------------------------- gider bölümü */
@@ -170,7 +186,7 @@ await step('Gelen fatura dosyası gider faturalarına aktarılıyor', async () =
   await page.waitForSelector('h1:has-text("Gider Faturaları")');
   await clearToast();
   await page.setInputFiles('input.invoice-import', GELEN);
-  await waitToast('fatura içe aktarıldı');
+  await waitToast('3 yeni fatura aktarıldı');
   const table = await page.textContent('.table-card');
   for (const no of ['MRM-TEST-1', 'AAA-TEST-2', 'BEF-TEST-3']) {
     if (!table.includes(no)) throw new Error(`${no} listeye girmedi`);
@@ -209,6 +225,28 @@ await step('Fatura elle de eklenebiliyor', async () => {
   await page.click('.modal button:has-text("Kaydet")');
   await waitToast('Fatura kaydedildi');
   if (!(await page.textContent('.table-card')).includes('ELLE-1')) throw new Error('listeye eklenmedi');
+});
+
+await step('Aynı fatura no farklı tutarla gelirse çakışma bildiriliyor', async () => {
+  const { writeFileSync } = await import('node:fs');
+  const degisikPath = join(workDir, 'giden-degisik.xlsx');
+  writeFileSync(degisikPath, exportWorkbook([{
+    name: 'Faturalar',
+    rows: [PORTAL_HEADER, portalRow({
+      customer: 'Li JiaNi', date: gun(2), no: 'SCA-TEST-1',
+      amount: 9999, net: 9000, gross: 9999,
+    })],
+  }]));
+
+  await go('Gelirler');
+  await clearToast();
+  await page.setInputFiles('input.invoice-dry', degisikPath);
+  await page.waitForSelector('.verdict');
+  const verdict = (await page.textContent('.verdict')).replace(/\s+/g, ' ');
+  if (!/1 çakışma/.test(verdict)) throw new Error(verdict);
+  const uyari = await page.textContent('.table-card:has-text("farklı bilgilerle")');
+  if (!uyari.includes('SCA-TEST-1')) throw new Error('çakışan fatura listelenmedi');
+  console.log(`   ${verdict.trim()}`);
 });
 
 /* ------------------------------------------------- toplamlara yansıma - */

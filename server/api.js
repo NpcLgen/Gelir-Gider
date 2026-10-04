@@ -692,9 +692,43 @@ const parseDate = (value) => {
   return text;
 };
 
+const norm = (value) => String(value ?? '').trim().toLocaleUpperCase('tr');
+/** İki tutar aynı mı (kuruş farkı yok sayılır)? */
+const sameMoney = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.01;
+
+/**
+ * Aynı kaydın daha önce işlenip işlenmediğini söyler.
+ * `key` kaydı tanımlayan alan (fatura no gibi), `same` ise geri kalan bilgilerin
+ * de birebir aynı olup olmadığını döndürür. Böylece "aynı numara + aynı bilgi"
+ * sessizce atlanır, "aynı numara + farklı bilgi" çakışma olarak bildirilir.
+ */
+const DUPLICATE_RULES = {
+  invoice: {
+    key: (i) => norm(i.invoiceNo),
+    same: (a, b) => norm(a.customer) === norm(b.customer)
+      && a.date === b.date
+      && norm(a.currency) === norm(b.currency)
+      && sameMoney(a.grossAmount, b.grossAmount)
+      && sameMoney(a.netAmount, b.netAmount),
+    label: (i) => `${i.invoiceNo} numaralı fatura`,
+  },
+  expense: {
+    key: (e) => [e.date, norm(e.description), norm(e.category)].join('|'),
+    same: (a, b) => sameMoney(a.amount, b.amount) && norm(a.currency) === norm(b.currency),
+    label: (e) => `${e.date} tarihli "${e.description}" gideri`,
+  },
+  reservation: {
+    key: (r) => [r.roomId, r.checkIn, r.checkOut, norm(r.guestName)].join('|'),
+    same: (a, b) => sameMoney(a.totalAmount, b.totalAmount) && norm(a.currency) === norm(b.currency),
+    label: (r) => `${r.guestName} (${r.checkIn} → ${r.checkOut}) rezervasyonu`,
+  },
+};
+
 /**
  * Şablona göre satırları okur, doğrular ve (dryRun değilse) kaydeder.
- * Geçersiz satırlar sebebiyle birlikte döndürülür (PRD: "geçersiz satırlar bildirilmeli").
+ * Daha önce işlenmiş kayıtlar tekrar yazılmaz: aynı anahtar ve aynı bilgi
+ * taşıyan satırlar "atlandı" olarak, bilgisi değişmiş olanlar "çakışma" olarak
+ * raporlanır. Geçersiz satırlar sebebiyle birlikte döndürülür.
  */
 export async function importRows(parsed, kind, user, dryRun = false) {
   const template = TEMPLATES[kind];
@@ -716,6 +750,40 @@ export async function importRows(parsed, kind, user, dryRun = false) {
   const db = await load();
   const valid = [];
   const invalidRows = [];
+  /** Daha önce birebir aynısı işlenmiş satırlar. */
+  const skippedRows = [];
+  /** Aynı anahtarla kayıtlı ama bilgileri değişmiş satırlar. */
+  const conflictRows = [];
+
+  const ruleName = template.direction ? 'invoice' : (kind === 'gider' ? 'expense' : 'reservation');
+  const rule = DUPLICATE_RULES[ruleName];
+  const collection = template.target ?? (kind === 'gider' ? 'expenses' : 'reservations');
+  // Mevcut kayıtlar anahtarlarıyla indekslenir; aktarım sırasındakiler de eklenir.
+  const seen = new Map();
+  for (const item of db[collection] ?? []) {
+    const key = rule.key(item);
+    if (key) seen.set(key, item);
+  }
+
+  /**
+   * Kayıt daha önce işlendiyse true döner ve satırı uygun listeye yazar.
+   */
+  const alreadyProcessed = (item, lineNo, row) => {
+    const key = rule.key(item);
+    if (!key) return false;
+    const existing = seen.get(key);
+    if (!existing) return false;
+    if (rule.same(existing, item)) {
+      skippedRows.push({ line: lineNo, reason: `${rule.label(item)} zaten kayıtlı; tekrar işlenmedi.`, raw: row });
+    } else {
+      conflictRows.push({
+        line: lineNo,
+        reason: `${rule.label(item)} farklı bilgilerle kayıtlı; değiştirmemek için atlandı.`,
+        raw: row,
+      });
+    }
+    return true;
+  };
 
   rows.slice(1).forEach((row, index) => {
     const lineNo = index + 2; // başlık satırı 1
@@ -734,10 +802,13 @@ export async function importRows(parsed, kind, user, dryRun = false) {
         netAmount: parseAmount(get('netAmount')) || 0,
         grossAmount: parseAmount(get('grossAmount')) || 0,
       });
-      const existing = db[template.target] ?? [];
-      const errors = validateInvoice(item, { invoices: [...existing, ...valid] });
+      // Mükerrer kontrolü aşağıda ayrıca yapılır; doğrulama yalnızca alanlara bakar.
+      const errors = validateInvoice(item, { invoices: [] });
       if (errors.length) invalidRows.push({ line: lineNo, errors, raw: row });
-      else valid.push(item);
+      else if (!alreadyProcessed(item, lineNo, row)) {
+        seen.set(rule.key(item), item);
+        valid.push(item);
+      }
     } else if (kind === 'gider') {
       const room = db.rooms.find((r) => String(r.number) === get('roomNumber'));
       const item = createExpense({
@@ -753,7 +824,10 @@ export async function importRows(parsed, kind, user, dryRun = false) {
       const errors = validateExpense(item, { rooms: db.rooms });
       if (get('roomNumber') && !room) errors.push(`"${get('roomNumber')}" numaralı oda bulunamadı.`);
       if (errors.length) invalidRows.push({ line: lineNo, errors, raw: row });
-      else valid.push(item);
+      else if (!alreadyProcessed(item, lineNo, row)) {
+        seen.set(rule.key(item), item);
+        valid.push(item);
+      }
     } else {
       const room = db.rooms.find((r) => String(r.number) === get('roomNumber'));
       const item = createReservation({
@@ -768,21 +842,26 @@ export async function importRows(parsed, kind, user, dryRun = false) {
         commissionRate: parseAmount(get('commissionRate')) || 0,
         breakfastIncluded: parseBool(get('breakfastIncluded')),
       });
+      // Aynı rezervasyon ikinci kez yüklenirse çakışma hatası yerine atlanır.
+      if (room && alreadyProcessed(item, lineNo, row)) return;
       const errors = validateReservation(item, { rooms: db.rooms, reservations: [...db.reservations, ...valid] });
       if (!room) errors.unshift(`"${get('roomNumber')}" numaralı oda bulunamadı.`);
       if (errors.length) invalidRows.push({ line: lineNo, errors, raw: row });
-      else valid.push(item);
+      else {
+        seen.set(rule.key(item), item);
+        valid.push(item);
+      }
     }
   });
 
   if (!dryRun && valid.length) {
-    const collection = template.target ?? (kind === 'gider' ? 'expenses' : 'reservations');
     await update((current) => {
       current[collection].push(...valid);
       current[collection].sort(RESOURCES[collection].sort);
       record(current, {
         user, action: 'import', entity: collection,
-        summary: `Excel içe aktarım: ${valid.length} kayıt eklendi, ${invalidRows.length} satır reddedildi`,
+        summary: `Excel içe aktarım: ${valid.length} kayıt eklendi, ${skippedRows.length} kayıt zaten vardı`
+          + `, ${conflictRows.length} çakışma, ${invalidRows.length} satır reddedildi`,
       });
     });
   }
@@ -795,6 +874,12 @@ export async function importRows(parsed, kind, user, dryRun = false) {
     validCount: valid.length,
     invalidCount: invalidRows.length,
     invalidRows: invalidRows.slice(0, 100),
+    /** Daha önce birebir aynısı işlendiği için atlanan satırlar. */
+    skippedCount: skippedRows.length,
+    skippedRows: skippedRows.slice(0, 100),
+    /** Aynı anahtarla kayıtlı ama bilgisi değişmiş satırlar. */
+    conflictCount: conflictRows.length,
+    conflictRows: conflictRows.slice(0, 100),
     preview: valid.slice(0, 20),
   };
 }

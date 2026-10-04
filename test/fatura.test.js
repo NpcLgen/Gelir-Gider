@@ -121,24 +121,97 @@ test('giden fatura dosyası gelir faturalarına yazılır', async () => {
   assert.equal(db.salesInvoices[0].customer, 'Li JiaNi');
 });
 
-test('aynı fatura ikinci kez aktarılmaz', async () => {
+test('aynı dosya ikinci kez yüklenince hiçbir satır tekrar işlenmez', async () => {
   await resetForTests(emptyDb());
   const buffer = portalWorkbook([
     portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'AYNI-1', amount: 100, currency: 'TRY', net: 90, gross: 100 }),
+    portalRow({ customer: 'B Ltd', dateSerial: 46295, no: 'AYNI-2', amount: 200, currency: 'TRY', net: 180, gross: 200 }),
   ]);
-  await importRows(parseWorkbook(buffer), 'gelenFatura', ADMIN, false);
+  const first = await importRows(parseWorkbook(buffer), 'gelenFatura', ADMIN, false);
+  assert.equal(first.imported, 2);
+  assert.equal(first.skippedCount, 0);
+
   const second = await importRows(parseWorkbook(buffer), 'gelenFatura', ADMIN, false);
-  assert.equal(second.imported, 0);
-  assert.match(second.invalidRows[0].errors.join(' '), /zaten kayıtlı/);
+  assert.equal(second.imported, 0, 'tekrar işlenmemeli');
+  assert.equal(second.skippedCount, 2);
+  assert.equal(second.invalidCount, 0, 'atlanan satır hata sayılmamalı');
+  assert.equal(second.conflictCount, 0);
+  assert.match(second.skippedRows[0].reason, /zaten kayıtlı; tekrar işlenmedi/);
+  assert.equal((await load()).purchaseInvoices.length, 2, 'kayıt çoğalmamalı');
+});
+
+test('dosyanın yarısı yeniyse yalnızca yeni satırlar işlenir', async () => {
+  await resetForTests(emptyDb());
+  const eski = portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'KARMA-1', amount: 100, currency: 'TRY', net: 90, gross: 100 });
+  await importRows(parseWorkbook(portalWorkbook([eski])), 'gelenFatura', ADMIN, false);
+
+  const yeni = portalRow({ customer: 'C Ltd', dateSerial: 46296, no: 'KARMA-2', amount: 300, currency: 'TRY', net: 270, gross: 300 });
+  const result = await importRows(parseWorkbook(portalWorkbook([eski, yeni])), 'gelenFatura', ADMIN, false);
+  assert.equal(result.imported, 1);
+  assert.equal(result.skippedCount, 1);
+  const db = await load();
+  assert.equal(db.purchaseInvoices.length, 2);
+  assert.deepEqual(db.purchaseInvoices.map((i) => i.invoiceNo).sort(), ['KARMA-1', 'KARMA-2']);
+});
+
+test('aynı dosyadaki mükerrer satır ikinci kez işlenmez', async () => {
+  await resetForTests(emptyDb());
+  const row = portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'TEK-1', amount: 100, currency: 'TRY', net: 90, gross: 100 });
+  const result = await importRows(parseWorkbook(portalWorkbook([row, row])), 'gelenFatura', ADMIN, false);
+  assert.equal(result.imported, 1);
+  assert.equal(result.skippedCount, 1);
   assert.equal((await load()).purchaseInvoices.length, 1);
 });
 
-test('aynı dosyadaki mükerrer satır da reddedilir', async () => {
+test('aynı numara farklı bilgiyle gelirse çakışma bildirilir, kayıt değişmez', async () => {
   await resetForTests(emptyDb());
-  const row = portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'TEK-1', amount: 100, currency: 'TRY', net: 90, gross: 100 });
-  const result = await importRows(parseWorkbook(portalWorkbook([row, row])), 'gelenFatura', ADMIN, true);
-  assert.equal(result.validCount, 1);
-  assert.equal(result.invalidCount, 1);
+  const ilk = portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'CAK-1', amount: 100, currency: 'TRY', net: 90, gross: 100 });
+  await importRows(parseWorkbook(portalWorkbook([ilk])), 'gelenFatura', ADMIN, false);
+
+  const degisik = portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'CAK-1', amount: 999, currency: 'TRY', net: 900, gross: 999 });
+  const result = await importRows(parseWorkbook(portalWorkbook([degisik])), 'gelenFatura', ADMIN, false);
+  assert.equal(result.imported, 0);
+  assert.equal(result.skippedCount, 0);
+  assert.equal(result.conflictCount, 1);
+  assert.match(result.conflictRows[0].reason, /farklı bilgilerle kayıtlı/);
+
+  const db = await load();
+  assert.equal(db.purchaseInvoices.length, 1);
+  assert.equal(db.purchaseInvoices[0].grossAmount, 100, 'mevcut kayıt değişmemeli');
+});
+
+test('fatura no büyük/küçük harf farkıyla da mükerrer sayılır', async () => {
+  await resetForTests(emptyDb());
+  const buffer = portalWorkbook([
+    portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'abc-1', amount: 100, currency: 'TRY', net: 90, gross: 100 }),
+  ]);
+  await importRows(parseWorkbook(buffer), 'gelenFatura', ADMIN, false);
+  const second = await importRows(parseWorkbook(portalWorkbook([
+    portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'ABC-1', amount: 100, currency: 'TRY', net: 90, gross: 100 }),
+  ])), 'gelenFatura', ADMIN, false);
+  assert.equal(second.skippedCount, 1);
+  assert.equal(second.imported, 0);
+});
+
+test('ön kontrol de atlanacak satırları önceden gösterir', async () => {
+  await resetForTests(emptyDb());
+  const buffer = portalWorkbook([
+    portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'ONK-1', amount: 100, currency: 'TRY', net: 90, gross: 100 }),
+  ]);
+  await importRows(parseWorkbook(buffer), 'gelenFatura', ADMIN, false);
+  const check = await importRows(parseWorkbook(buffer), 'gelenFatura', ADMIN, true);
+  assert.equal(check.dryRun, true);
+  assert.equal(check.validCount, 0);
+  assert.equal(check.skippedCount, 1);
+});
+
+test('gelen ve giden faturalar birbirinin mükerreri sayılmaz', async () => {
+  await resetForTests(emptyDb());
+  const row = portalRow({ customer: 'A Ltd', dateSerial: 46295, no: 'ORTAK-1', amount: 100, currency: 'TRY', net: 90, gross: 100 });
+  const gelen = await importRows(parseWorkbook(portalWorkbook([row])), 'gelenFatura', ADMIN, false);
+  const giden = await importRows(parseWorkbook(portalWorkbook([row])), 'gidenFatura', ADMIN, false);
+  assert.equal(gelen.imported, 1);
+  assert.equal(giden.imported, 1, 'ayrı defterler ayrı değerlendirilir');
 });
 
 test('ön kontrol (dryRun) kayıt eklemez', async () => {
@@ -251,4 +324,63 @@ test('faturaların KDV’si vergi raporuna gerçek tutarıyla girer', () => {
   assert.equal(report.invoiceRevenue, 50000);
   assert.equal(report.totalRevenue, 160000);
   assert.equal(report.invoiceNetRevenue, 45500);
+});
+
+/* ------------------------- gider / rezervasyon aktarımı da tekrarlanmaz - */
+
+/** Şablon başlıklarıyla bir çalışma kitabı üretir. */
+const templateWorkbook = (kind, rows) => exportWorkbook([{
+  name: TEMPLATES[kind].sheet,
+  rows: [TEMPLATES[kind].columns.map((c) => c.label), ...rows],
+}]);
+
+test('aynı gider dosyası ikinci kez yüklenince kayıt çoğalmaz', async () => {
+  await resetForTests(emptyDb());
+  // Tarih · Kategori · Açıklama · Tutar · Para Birimi · Dağıtım · Oda No · Tedarikçi
+  const buffer = templateWorkbook('gider', [
+    ['2026-10-01', 'other', 'Elektrik faturası', 12500, 'TRY', 'general', '', 'Enerjisa'],
+    ['2026-10-02', 'other', 'Su faturası', 3100, 'TRY', 'general', '', 'ASKİ'],
+  ]);
+  const first = await importRows(parseWorkbook(buffer), 'gider', ADMIN, false);
+  assert.equal(first.imported, 2);
+
+  const second = await importRows(parseWorkbook(buffer), 'gider', ADMIN, false);
+  assert.equal(second.imported, 0, 'aynı giderler tekrar işlenmemeli');
+  assert.equal(second.skippedCount, 2);
+  assert.equal((await load()).expenses.length, 2);
+});
+
+test('gider tutarı değişmişse çakışma olarak bildirilir', async () => {
+  await resetForTests(emptyDb());
+  const row = ['2026-10-01', 'other', 'Elektrik faturası', 12500, 'TRY', 'general', '', 'Enerjisa'];
+  await importRows(parseWorkbook(templateWorkbook('gider', [row])), 'gider', ADMIN, false);
+  const degisik = [...row];
+  degisik[3] = 18000;
+  const result = await importRows(parseWorkbook(templateWorkbook('gider', [degisik])), 'gider', ADMIN, false);
+  assert.equal(result.conflictCount, 1);
+  assert.equal(result.imported, 0);
+  assert.equal((await load()).expenses[0].amount, 12500, 'mevcut tutar korunmalı');
+});
+
+test('aynı rezervasyon dosyası ikinci kez yüklenince hata değil atlama üretir', async () => {
+  const db = emptyDb();
+  const { createRoom } = await import('../src/core/model.js');
+  db.rooms = [createRoom({
+    id: 'r1', number: '101', name: 'Suit', maxOccupancy: 3,
+    beds: [{ type: 'double', count: 1 }, { type: 'single', count: 1 }],
+  })];
+  await resetForTests(db);
+
+  // Giriş · Çıkış · Oda No · Misafir · Kişi · Tutar · Para Birimi · Kanal · Komisyon · Kahvaltı
+  const buffer = templateWorkbook('gelir', [
+    ['2026-10-03', '2026-10-06', '101', 'Yılmaz Ailesi', 2, 18000, 'TRY', 'direct', 0, 'Evet'],
+  ]);
+  const first = await importRows(parseWorkbook(buffer), 'gelir', ADMIN, false);
+  assert.equal(first.imported, 1, JSON.stringify(first.invalidRows));
+
+  const second = await importRows(parseWorkbook(buffer), 'gelir', ADMIN, false);
+  assert.equal(second.imported, 0);
+  assert.equal(second.skippedCount, 1, 'çakışan tarih hatası değil, atlama olmalı');
+  assert.equal(second.invalidCount, 0);
+  assert.equal((await load()).reservations.length, 1);
 });
