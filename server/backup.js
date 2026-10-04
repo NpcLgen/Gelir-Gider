@@ -24,7 +24,8 @@ const isBackupName = (name) => /^otel-yedek-.*\.json$/.test(name);
 const COLLECTIONS = [
   'users', 'rooms', 'reservations', 'expenses', 'prices', 'settings',
   'employees', 'extraWorkers', 'suppliers', 'supplierTxns', 'cashDays',
-  'restaurantIncomes', 'restaurantExpenses', 'foreignWorkers', 'auditLog',
+  'restaurantIncomes', 'restaurantExpenses', 'foreignWorkers',
+  'purchaseInvoices', 'salesInvoices', 'auditLog',
 ];
 
 export function snapshot(db) {

@@ -6,7 +6,8 @@
 
 import { EXPENSE_GROUPS } from '../core/catalog.js';
 import { expandExpenses } from '../core/costEngine.js';
-import { defaultTaxRates, employeeTotal, taxReport } from '../core/finance.js';
+import { defaultTaxRates, employeeTotal, invoiceAmount, taxReport } from '../core/finance.js';
+import { rateFor } from '../core/fx.js';
 import { categoryOf } from '../core/model.js';
 import { formatDate, formatMoney } from '../core/format.js';
 import { donutChart } from './charts.js';
@@ -21,6 +22,7 @@ const SOURCES = [
   { key: 'toptanci', label: 'Toptancı Faturaları', module: 'toptancilar', color: '#c98500', view: 'toptancilar' },
   { key: 'restoran', label: 'Restoran Ekstra Giderler', module: 'restoranGider', color: '#d55181', view: 'restoranGider' },
   { key: 'yabanci', label: 'Yabancı Çalışanlar', module: 'yabanciCalisanlar', color: '#9085e9', view: 'yabanci' },
+  { key: 'fatura', label: 'Gider Faturaları', module: 'giderFaturalari', color: '#4aa3a3', view: 'giderFaturalari' },
 ];
 
 /**
@@ -121,6 +123,25 @@ export function collectExpenses(app) {
         extra: worker.note,
         amount: worker.amount,
         group: 'fixed',
+      });
+    }
+  }
+
+  if (app.can('giderFaturalari')) {
+    for (const invoice of state.purchaseInvoices ?? []) {
+      if (invoice.active === false || invoice.date < p.from || invoice.date > p.to) continue;
+      const rate = rateFor(state.settings.fx, invoice.date);
+      const amount = invoice.currency === 'EUR'
+        ? invoiceAmount(invoice) * (Number(rate) || 1)
+        : invoiceAmount(invoice);
+      rows.push({
+        source: 'fatura',
+        date: invoice.date,
+        title: invoice.customer,
+        detail: `Gelen fatura ${invoice.invoiceNo}`,
+        extra: invoice.currency === 'TRY' ? invoice.note : `${invoice.currency} ${invoice.grossAmount}`,
+        amount: Math.round(amount * 100) / 100,
+        group: 'operational',
       });
     }
   }

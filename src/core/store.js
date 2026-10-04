@@ -18,6 +18,7 @@ const emptyState = () => ({
   settings: { ...defaultSettings(), tax: defaultTaxRates(), bills: [] },
   employees: [], extraWorkers: [], suppliers: [], supplierTxns: [], cashDays: [],
   restaurantIncomes: [], restaurantExpenses: [], foreignWorkers: [],
+  purchaseInvoices: [], salesInvoices: [],
   users: [], auditLog: [], modules: [], me: null,
 });
 
@@ -98,6 +99,12 @@ export async function createStore() {
     /* --- Yabancı çalışanlar (PRD v2 §3.1) --- */
     saveForeignWorker: (patch) => mutate(() => api.post('/api/foreignWorkers', patch)),
     deleteForeignWorker: (id) => mutate(() => api.del(`/api/foreignWorkers/${id}`)),
+
+    /* --- Gelen / giden faturalar --- */
+    savePurchaseInvoice: (patch) => mutate(() => api.post('/api/purchaseInvoices', patch)),
+    deletePurchaseInvoice: (id) => mutate(() => api.del(`/api/purchaseInvoices/${id}`)),
+    saveSalesInvoice: (patch) => mutate(() => api.post('/api/salesInvoices', patch)),
+    deleteSalesInvoice: (id) => mutate(() => api.del(`/api/salesInvoices/${id}`)),
 
     /* --- Kasa --- */
     saveCashDay: (patch) => mutate(() => api.post('/api/cashDays', patch)),

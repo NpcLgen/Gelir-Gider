@@ -29,6 +29,7 @@ import { roomsView } from './roomsView.js';
 import { settingsView } from './settingsView.js';
 import { backupView } from './backupView.js';
 import { foreignWorkersView } from './foreignWorkersView.js';
+import { purchaseInvoiceView, salesInvoiceView } from './invoiceView.js';
 import { restaurantExpenseView } from './restaurantExpenseView.js';
 import { restaurantIncomeView } from './restaurantView.js';
 import { suppliersView } from './suppliersView.js';
@@ -38,12 +39,14 @@ import { openOwnPasswordForm, usersView } from './usersView.js';
 /** PRD §9 — ana menü yapısı. `module` yetkisi olmayan girdi menüde görünmez. */
 const VIEWS = [
   { key: 'panel', label: 'Dashboard', icon: '📊', module: 'dashboard', group: 'Genel', render: dashboardView },
-  { key: 'gelirler', label: 'Gelirler', icon: '🛎️', module: 'gelirler', group: 'Genel', render: reservationsView },
+  { key: 'gelirler', label: 'Gelirler', icon: '🧾', module: 'gelirler', group: 'Genel', render: salesInvoiceView },
+  { key: 'rezervasyonlar', label: 'Rezervasyonlar', icon: '🛎️', module: 'rezervasyonlar', group: 'Genel', render: reservationsView },
   { key: 'takvim', label: 'Fiyat Girişi', icon: '🗓️', module: 'fiyatGirisi', group: 'Genel', render: calendarView },
   { key: 'odalar', label: 'Oda Ayarları', icon: '🚪', module: 'odalar', group: 'Genel', render: roomsView },
 
   { key: 'tumGiderler', label: 'Giderler', icon: '📉', module: 'giderler', group: 'Giderler', render: expenseSummaryView },
   { key: 'giderler', label: 'Genel Harcamalar', icon: '🧾', module: 'genelHarcamalar', group: 'Giderler', render: expensesView },
+  { key: 'giderFaturalari', label: 'Gider Faturaları', icon: '📨', module: 'giderFaturalari', group: 'Giderler', render: purchaseInvoiceView },
   { key: 'calisanlar', label: 'Çalışanlar', icon: '👷', module: 'calisanlar', group: 'Giderler', render: employeesView },
   { key: 'ekstra', label: 'Ekstra Çalışan', icon: '🧑‍🔧', module: 'ekstraCalisan', group: 'Giderler', render: extraWorkersView },
   { key: 'yabanci', label: 'Yabancı Çalışanlar', icon: '🌍', module: 'yabanciCalisanlar', group: 'Giderler', render: foreignWorkersView },

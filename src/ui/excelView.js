@@ -53,7 +53,8 @@ export function excelView(app) {
         }, '❓ Yardım / Örnek Şablon')),
       h('div', { class: 'row gap wrap center' },
         h('div', { class: 'segmented' },
-          ...[['gider', 'Giderler'], ['gelir', 'Gelirler']].map(([key, label]) => h('button', {
+          ...[['gider', 'Giderler'], ['gelir', 'Rezervasyonlar'],
+            ['gelenFatura', 'Gelen Fatura'], ['gidenFatura', 'Giden Fatura']].map(([key, label]) => h('button', {
             class: `seg-btn${state.kind === key ? ' active' : ''}`, type: 'button',
             onClick: () => { state.kind = key; state.lastResult = null; app.refresh(); },
           }, label))),
@@ -122,7 +123,17 @@ export function openTemplateHelp(app) {
               toast(`${name} indirildi.`);
             } catch (err) { toast(err.message, 'error'); }
           },
-        }, '⬇️ Gelir Şablonu')),
+        }, '⬇️ Gelir Şablonu'),
+        ...[['gelenFatura', 'Gelen Fatura Şablonu'], ['gidenFatura', 'Giden Fatura Şablonu']]
+          .map(([kind, label]) => h('button', {
+            class: 'btn', type: 'button',
+            onClick: async () => {
+              try {
+                const name = await api.download('/api/excel/template', { kind }, `ornek-sablon-${kind}.xlsx`);
+                toast(`${name} indirildi.`);
+              } catch (err) { toast(err.message, 'error'); }
+            },
+          }, `⬇️ ${label}`))),
       h('h4', {}, 'Gider sütunları'),
       h('ul', { class: 'plain-list' },
         ...['Tarih (YYYY-AA-GG)', 'Kategori', 'Açıklama', 'Tutar', 'Para Birimi (TRY/EUR)',
@@ -133,12 +144,21 @@ export function openTemplateHelp(app) {
         ...['Giriş Tarihi', 'Çıkış Tarihi', 'Oda No', 'Misafir Adı', 'Kişi Sayısı', 'Toplam Tutar',
           'Para Birimi', 'Kanal', 'Komisyon (%)', 'Kahvaltı Dahil (Evet/Hayır)']
           .map((c) => h('li', {}, c))),
+      h('h4', {}, 'Gelen / giden fatura sütunları'),
+      h('ul', { class: 'plain-list' },
+        ...['Müşteri', 'Fatura Tarihi', 'Fatura No', 'Tutar', 'Para Birimi',
+          'Vergiler Hariç Toplam Tutar', 'Vergiler Dahil Toplam Tutar']
+          .map((c) => h('li', {}, c))),
       h('p', { class: 'muted small' },
-        'Tutarlarda "12.500,75" ve "12500.75" biçimlerinin ikisi de kabul edilir. Tarihlerde 01.10.2026 biçimi de çalışır.')),
+        'e-Fatura portalından indirdiğiniz dosyayı olduğu gibi yükleyebilirsiniz: yalnızca yukarıdaki ' +
+        'başlıkları taşıyan sütunlar okunur, diğer sütunlar yok sayılır.'),
+      h('p', { class: 'muted small' },
+        'Tutarlarda "12.500,75" ve "12500.75" biçimlerinin ikisi de kabul edilir. Tarihlerde 01.10.2026 ' +
+        've Excel tarih hücreleri de çalışır.')),
   });
 }
 
-function importResult(result) {
+export function importResult(result) {
   if (result.error) {
     return h('div', { class: 'error-box' },
       h('strong', {}, result.error),

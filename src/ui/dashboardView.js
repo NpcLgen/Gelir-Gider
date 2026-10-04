@@ -6,7 +6,8 @@
 
 import { EXPENSE_GROUPS, UTILITY_KINDS, UTILITY_LABELS } from '../core/catalog.js';
 import { compareReports, grossUpForCommission, priceVerdict } from '../core/costEngine.js';
-import { defaultTaxRates, restaurantIncomeSummary } from '../core/finance.js';
+import { defaultTaxRates, invoiceSummary, restaurantIncomeSummary } from '../core/finance.js';
+import { rateFor } from '../core/fx.js';
 import { previousYear } from '../core/dates.js';
 import { categoryOf, roomLabel } from '../core/model.js';
 import { formatDecimal, formatNumber, formatPercent } from '../core/format.js';
@@ -31,19 +32,40 @@ export function dashboardView(app) {
       .reduce((sum, e) => sum + e.amount, 0)
     : 0;
 
-  const combinedRevenue = Math.round((totals.revenue + restaurant.gross) * 100) / 100;
-  const combinedProfit = Math.round((totals.netProfit + restaurant.gross - restaurantExpenses) * 100) / 100;
+  // Gelen/giden faturalar (e-fatura) gelir ve gider toplamlarına katılır.
+  const fxRate = (date) => rateFor(settings.fx, date);
+  const salesInvoices = app.can('gelirler')
+    ? invoiceSummary(state.salesInvoices, { from: p.from, to: p.to, rateFor: fxRate })
+    : { gross: 0, count: 0 };
+  const purchaseInvoices = app.can('giderFaturalari')
+    ? invoiceSummary(state.purchaseInvoices, { from: p.from, to: p.to, rateFor: fxRate })
+    : { gross: 0, count: 0 };
+
+  const revenueParts = [
+    ['Oda', totals.revenue],
+    ['restoran', restaurant.gross],
+    ['fatura', salesInvoices.gross],
+  ].filter(([, value]) => value > 0);
+
+  const combinedRevenue = Math.round((totals.revenue + restaurant.gross + salesInvoices.gross) * 100) / 100;
+  const combinedExpenses = Math.round((totals.expenses + restaurantExpenses + purchaseInvoices.gross) * 100) / 100;
+  const combinedProfit = Math.round((combinedRevenue - combinedExpenses) * 100) / 100;
 
   const marginTone = totals.targetMet ? 'good' : 'bad';
 
   const kpis = h('div', { class: 'kpi-grid' },
     kpi('Toplam Gelir', present.money(combinedRevenue),
-      restaurant.gross > 0
-        ? `Oda ${present.money(totals.revenue)} + restoran ${present.money(restaurant.gross)}`
+      restaurant.gross > 0 || salesInvoices.gross > 0
+        ? revenueParts.map(([label, value]) => `${label} ${present.money(value)}`).join(' + ')
         : `Komisyon sonrası ${present.money(totals.netRevenue)}`),
-    kpi('Toplam Gider', present.money(totals.expenses), `${present.money(totals.totalCost)} odalara dağıtıldı`),
+    kpi('Toplam Gider', present.money(combinedExpenses),
+      purchaseInvoices.gross > 0
+        ? `${present.money(totals.expenses)} kayıt + fatura ${present.money(purchaseInvoices.gross)}`
+        : `${present.money(totals.totalCost)} odalara dağıtıldı`),
     kpi('Net Kâr', present.money(combinedProfit),
-      restaurant.gross > 0 ? 'Restoran dâhil' : `Hedef marj %${Math.round(totals.targetMargin * 100)}`, marginTone),
+      restaurant.gross > 0 || salesInvoices.gross > 0
+        ? 'Restoran ve faturalar dâhil'
+        : `Hedef marj %${Math.round(totals.targetMargin * 100)}`, marginTone),
     kpi('Kâr Marjı', formatPercent(totals.margin),
       totals.targetMet ? '✔ hedefin üzerinde' : '✖ hedefin altında', marginTone),
     kpi('ADR', present.money(totals.adr), 'Ortalama satılan gece fiyatı'),
@@ -52,6 +74,14 @@ export function dashboardView(app) {
     kpi('Kişi Başı Maliyet', present.money(totals.costPerGuestNight), `${formatNumber(totals.guestNights)} kişi-gece`),
     restaurant.gross > 0
       ? kpi('Restoran Geliri', present.money(restaurant.gross), `${restaurant.count} gün sonu · KDV ${present.money(restaurant.kdv)}`)
+      : null,
+    salesInvoices.gross > 0
+      ? kpi('Gelir Faturaları', present.money(salesInvoices.gross),
+        `${salesInvoices.count} giden fatura · KDV ${present.money(salesInvoices.kdv)}`)
+      : null,
+    purchaseInvoices.gross > 0
+      ? kpi('Gider Faturaları', present.money(purchaseInvoices.gross),
+        `${purchaseInvoices.count} gelen fatura · KDV ${present.money(purchaseInvoices.kdv)}`, 'bad')
       : null);
 
   return h('div', { class: 'stack' },

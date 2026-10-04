@@ -15,6 +15,7 @@ export const PRINT_SECTIONS = [
   { key: 'kasa', label: 'Kasa Durumu', selector: '[data-print="kasa"]' },
   { key: 'odalar', label: 'Oda Bazlı Tablolar', selector: '[data-print="odalar"]' },
   { key: 'restoran', label: 'Restoran Gelirleri', selector: '[data-print="restoran"]' },
+  { key: 'faturalar', label: 'Gelen / Giden Faturalar', selector: '[data-print="faturalar"]' },
   { key: 'tables', label: 'Diğer Tablolar', selector: '.table-card' },
 ];
 

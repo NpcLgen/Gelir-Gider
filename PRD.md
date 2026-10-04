@@ -2,7 +2,7 @@
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 2.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 133 birim/API testi (`npm test`) + 80 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 150 birim/API testi (`npm test`) + 93 adımlı tarayıcı akış testi (`npm run test:browser`).
 **Sürüm 2.0 teslim listesi:** 18/18 madde tamamlandı — bkz. [§12](#12-sürüm-20-teslim-listesi-1818).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
@@ -330,9 +330,10 @@ harf ve bir rakam.
 ## 9. Ana Menü Yapısı ✅
 
 ```
-▾ GENEL      → Dashboard · Gelirler · Fiyat Girişi · Oda Ayarları
-▾ GİDERLER   → Giderler · Genel Harcamalar · Çalışanlar · Ekstra Çalışan ·
-               Yabancı Çalışanlar · Vergiler
+▾ GENEL      → Dashboard · Gelirler (giden faturalar) · Rezervasyonlar ·
+               Fiyat Girişi · Oda Ayarları
+▾ GİDERLER   → Giderler · Genel Harcamalar · Gider Faturaları (gelen) ·
+               Çalışanlar · Ekstra Çalışan · Yabancı Çalışanlar · Vergiler
 ▾ RESTORAN   → Restoran Gelirleri · Ekstra Giderler · Toptancılar
 ▾ KASA       → Gün Sonu / Kasa
 ▾ RAPORLAR   → Finansal Raporlar · Excel İşlemleri
@@ -359,7 +360,7 @@ scripts/serve.js      → tek komutla statik dosya + API sunucusu
 server/
   db.js               → dosya tabanlı depo, atomik yazma, sıralı güncelleme
   auth.js             → PBKDF2 şifre saklama, oturum, varsayılan Admin
-  permissions.js      → 22 modül, yetki kontrolü
+  permissions.js      → 24 modül, yetki kontrolü
   api.js              → kimlik, CRUD, fiyat, ayarlar, faturalar, kullanıcılar, Excel,
                         yedekleme, döviz kuru
   excel.js            → bağımlılıksız XLSX okuma/yazma (node:zlib), şablonlar
@@ -367,7 +368,7 @@ server/
   backup.js           → yedek alma, listeleme, doğrulama, geri yükleme, otomatik yedek
   audit.js            → denetim kaydı
 src/core/             → tarayıcı ve sunucunun paylaştığı saf mantık
-  finance.js          → personel, toptancı cari, kasa, vergi hesapları
+  finance.js          → personel, toptancı cari, kasa, vergi, fatura hesapları
   costEngine.js       → maliyet dağıtımı, fiyat eşikleri (bkz. PRD-BI.md)
   model.js · dates.js · fx.js · format.js · api.js · store.js
 src/ui/               → görünümler (login, dashboard, giderler/özet, toptancılar, kasa,
@@ -730,5 +731,102 @@ netsh advfirewall firewall add rule name="Otel Finans" dir=in action=allow proto
 | Vergi oranları yönetilebilir parametre | 6 oran + indirilebilirlik anahtarı Ayarlar'dan düzenlenir |
 | Kritik kayıtlar silinmek yerine pasife alınır | `active: false` (gider, restoran geliri, çalışan kayıtları) |
 | Kritik işlemler kullanıcı ve tarihle kaydedilir | `server/audit.js` — Kullanıcı ve Yetki sayfasında listelenir |
-| Yetkiler hem arayüzde hem API'de | 22 modül; menü filtrelenir, her uç nokta ayrıca 403 döner |
+| Yetkiler hem arayüzde hem API'de | 24 modül; menü filtrelenir, her uç nokta ayrıca 403 döner |
 | Masaüstü ve mobil kullanım | §14.2 — tablet ve telefon kırılma noktaları |
+
+---
+
+## 17. Gelen ve Giden Faturalar (e-Fatura Excel Aktarımı)
+
+### 17.1. Amaç
+
+e-Fatura portalından indirilen Excel çıktıları sisteme olduğu gibi yüklenebilir:
+
+| Dosya | Nereye yazılır | Menü |
+| --- | --- | --- |
+| **Gelen Fatura** (alış) | Gider faturaları | Giderler → **Gider Faturaları** |
+| **Giden Fatura** (satış) | Gelir faturaları | Genel → **Gelirler** |
+
+Gelir bölümü, gider bölümüyle **birebir aynı düzeni** kullanır (liste + ekle/düzenle
+formu + Excel içe aktarım). Rezervasyon penceresi bu sayfadan ayrılarak kendi
+sayfasına (**Rezervasyonlar**) taşınmıştır; doluluk, ADR ve RevPAR hesapları
+rezervasyonlardan üretilmeye devam eder.
+
+### 17.2. Okunan sütunlar
+
+Portal dosyasında onlarca sütun bulunur; sistem yalnızca aşağıdaki **yedi başlığı**
+okur, diğerlerini yok sayar. Sütun sırası önemli değildir, başlık adı eşleşmesi yeterlidir.
+Örnek şablonun başlıkları da birebir bunlardır:
+
+| Sütun | Kullanımı |
+| --- | --- |
+| **Müşteri** | Fatura karşı tarafı (zorunlu) |
+| **Fatura Tarihi** | Dönem filtrelerinde kullanılır (zorunlu) |
+| **Fatura No** | Mükerrer kayıt koruması (zorunlu) |
+| **Tutar** | Bilgi amaçlı; KDV dahil tutar boşsa hesapta bu kullanılır |
+| **Para Birimi** | TRY veya EUR; EUR tutarlar dönem kuruyla TL'ye çevrilir |
+| **Vergiler Hariç Toplam Tutar** | KDV matrahı |
+| **Vergiler Dahil Toplam Tutar** | **Hesaplamalarda kullanılan tutar** (zorunlu) |
+
+* Fatura KDV'si orandan değil, **dahil − hariç** farkından alınır; vergi raporunda
+  `KDV (giden faturalar)` ve `— gelen faturalardan` satırları olarak görünür.
+* Tarihler `YYYY-AA-GG`, `GG.AA.YYYY` ve **Excel tarih hücresi** (seri numara)
+  biçimlerinin üçünde de okunur.
+* Desteklenmeyen para birimi (ör. USD) olan satır, sebebiyle birlikte reddedilir.
+
+### 17.3. İçe aktarım kuralları
+
+| Kural | Davranış |
+| --- | --- |
+| Önce kontrol | "📂 Excel Kontrol Et" kayıt eklemez, yalnızca geçerli/hatalı satırları listeler |
+| Mükerrer fatura | Aynı fatura no ikinci kez yüklenemez (aynı dosyadaki tekrar da reddedilir) |
+| Hatalı satır | Diğer satırlar aktarılır; hatalılar satır numarası, sebep ve ham içerikle listelenir |
+| Eksik sütun | Dosya hiç işlenmez; eksik ve beklenen sütunlar ekranda gösterilir |
+| Pasife alma | Kayıt silinmeden `Aktif` kutusu kapatılarak toplamlardan çıkarılabilir |
+
+### 17.4. Raporlara yansıma
+
+* **Dashboard:** `Toplam Gelir` kırılımı `oda + restoran + fatura`, `Toplam Gider`
+  kırılımı `kayıt + fatura` olarak gösterilir; ayrıca `Gelir Faturaları` ve
+  `Gider Faturaları` KPI kartları eklenir.
+* **Giderler özeti:** `Gider Faturaları` yeni bir gider kaynağıdır.
+* **Vergi raporu:** fatura KDV'leri hesaplanan ve indirilecek KDV'ye gerçek tutarıyla girer.
+* **Excel dışa aktarım:** `Giden Faturalar` ve `Gelen Faturalar` sayfaları eklenir.
+* **Yedekleme:** her iki koleksiyon da yedeğe dâhildir (şema sürümü 4).
+
+> **Mükerrer sayım uyarısı.** Aynı satışı hem rezervasyon hem giden fatura olarak
+> girerseniz gelir iki kez sayılır. Sayfadaki not bunu hatırlatır; çakışan kaydı
+> silmek yerine pasife almak yeterlidir.
+
+### 17.5. Çözülen hata — boş hücreler sütunları kaydırıyordu
+
+Portal dosyalarında boş hücreler `<c r="I2"/>` biçiminde kendi kendini kapatır.
+Excel okuyucusu bu hücreleri atlayınca sonraki sütunlar sola kayıyor, "Tutar"
+boş görünüyor ve KDV tutarları yanlış sütundan okunuyordu. Okuyucu artık hücre
+referansını (`r="I2"`) esas alır ve boş hücreleri yerinde bırakır.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| F1 | Boş hücreler sütunları kaydırmaz | `boş hücreler sütunları kaydırmaz` |
+| F2 | Şablon yalnızca yedi sütun taşır | `fatura şablonları yalnızca istenen yedi sütunu taşır` |
+| F3 | Gelen fatura gidere yazılır | `gelen fatura dosyası gider faturalarına yazılır` |
+| F4 | Giden fatura gelire yazılır | `giden fatura dosyası gelir faturalarına yazılır` |
+| F5 | Mükerrer fatura reddedilir | `aynı fatura ikinci kez aktarılmaz` |
+| F6 | Ön kontrol kayıt eklemez | `ön kontrol (dryRun) kayıt eklemez` |
+| F7 | EUR tutarlar kurla çevrilir | `fatura özeti EUR tutarları kurla çevirir` |
+| F8 | Fatura KDV'si vergi raporuna girer | `faturaların KDV’si vergi raporuna gerçek tutarıyla girer` |
+| F9 | Arayüzde uçtan uca çalışır | tarayıcı: `test/browser/fatura.mjs` (13 adım) |
+
+---
+
+## 18. Bildirim Kutusu (Toast) Düzeltmesi
+
+Kaydetme bildirimi aşağı kaydırılarak gizleniyordu (`translate(-50%, 120%)`); kutu
+kısa olduğunda bu mesafe ekranın altına çıkmaya yetmiyor ve yeşil kutunun bir kısmı
+ekranda kalıyordu. Bildirim artık **3 saniye görünür kalır, sonra 0,45 saniyede
+solarak** tamamen kaybolur: `opacity: 0`, `visibility: hidden` ve `pointer-events: none`
+birlikte uygulanır, böylece ne görünür ne de tıklamaları yakalar.
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| T1 | 3 saniye sonra iz bırakmadan kaybolur | tarayıcı: `Bildirim kutusu 3 saniye sonra tamamen kayboluyor` |

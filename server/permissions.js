@@ -5,7 +5,8 @@
 
 export const MODULES = [
   { key: 'dashboard', label: 'Dashboard', group: 'Genel' },
-  { key: 'gelirler', label: 'Gelirler', group: 'Genel' },
+  { key: 'gelirler', label: 'Gelirler (Giden Faturalar)', group: 'Genel' },
+  { key: 'rezervasyonlar', label: 'Rezervasyonlar', group: 'Genel' },
   { key: 'fiyatGirisi', label: 'Fiyat Girişi', group: 'Genel' },
   { key: 'odalar', label: 'Oda Ayarları', group: 'Genel' },
 
@@ -14,6 +15,7 @@ export const MODULES = [
   { key: 'ekstraCalisan', label: 'Ekstra Çalışan', group: 'Giderler' },
   { key: 'yabanciCalisanlar', label: 'Yabancı Çalışanlar', group: 'Giderler' },
   { key: 'genelHarcamalar', label: 'Genel Harcamalar', group: 'Giderler' },
+  { key: 'giderFaturalari', label: 'Gider Faturaları (Gelen)', group: 'Giderler' },
   { key: 'vergiler', label: 'Vergiler', group: 'Giderler' },
 
   { key: 'restoran', label: 'Restoran', group: 'Restoran' },

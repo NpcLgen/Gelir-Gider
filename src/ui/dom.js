@@ -99,16 +99,18 @@ export function confirmDialog(message, onYes) {
 }
 
 let toastTimer;
+/** Bildirim: 3 saniye görünür kalır, sonra solarak tamamen kaybolur. */
+export const TOAST_MS = 3000;
 export function toast(message, kind = 'ok') {
   let el = document.querySelector('.toast');
   if (!el) {
-    el = h('div', { class: 'toast' });
+    el = h('div', { class: 'toast', role: 'status', 'aria-live': 'polite' });
     document.body.appendChild(el);
   }
   el.className = `toast toast-${kind} show`;
   el.textContent = message;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), TOAST_MS);
 }
 
 export function errorList(errors) {

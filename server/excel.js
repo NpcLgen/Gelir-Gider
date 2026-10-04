@@ -242,11 +242,13 @@ export function parseWorkbook(buffer) {
 
   for (const rowMatch of xml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
     const cells = [];
-    for (const cellMatch of rowMatch[2].matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)) {
+    // Boş hücreler `<c r="I2"/>` biçiminde kendi kendini kapatır; bunlar
+    // atlanırsa sonraki sütunlar sola kayar ve veriler yanlış sütuna düşer.
+    for (const cellMatch of rowMatch[2].matchAll(/<c([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
       const attrs = cellMatch[1];
       const ref = attrs.match(/r="([A-Z]+\d+)"/)?.[1];
       const type = attrs.match(/t="(\w+)"/)?.[1];
-      const body = cellMatch[2];
+      const body = cellMatch[2] ?? '';
       let value = '';
       if (type === 'inlineStr') {
         value = [...body.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => unescapeXml(t[1])).join('');
@@ -298,6 +300,39 @@ export const TEMPLATES = {
       { key: 'breakfastIncluded', label: 'Kahvaltı Dahil (Evet/Hayır)', example: 'Evet' },
     ],
   },
+
+  /**
+   * e-Fatura portalı Excel çıktısı. Portal dosyasında başka sütunlar da bulunur;
+   * içe aktarımda yalnızca aşağıdaki başlıklar okunur, sıraları önemli değildir.
+   */
+  gelenFatura: {
+    sheet: 'Gelen Faturalar',
+    target: 'purchaseInvoices',
+    direction: 'gelen',
+  columns: [
+      { key: 'customer', label: 'Müşteri', example: 'MERAM ELEKTRİK PERAKENDE SATIŞ A.Ş.', required: true },
+      { key: 'date', label: 'Fatura Tarihi', example: '2026-10-02', required: true },
+      { key: 'invoiceNo', label: 'Fatura No', example: 'MRM2026000116826', required: true },
+      { key: 'amount', label: 'Tutar', example: 39596 },
+      { key: 'currency', label: 'Para Birimi', example: 'TRY' },
+      { key: 'netAmount', label: 'Vergiler Hariç Toplam Tutar', example: 32997.04 },
+      { key: 'grossAmount', label: 'Vergiler Dahil Toplam Tutar', example: 39596.06, required: true },
+    ],
+  },
+  gidenFatura: {
+    sheet: 'Giden Faturalar',
+    target: 'salesInvoices',
+    direction: 'giden',
+  columns: [
+      { key: 'customer', label: 'Müşteri', example: 'Yılmaz Turizm A.Ş.', required: true },
+      { key: 'date', label: 'Fatura Tarihi', example: '2026-10-02', required: true },
+      { key: 'invoiceNo', label: 'Fatura No', example: 'SCA2026000000685', required: true },
+      { key: 'amount', label: 'Tutar', example: 39596 },
+      { key: 'currency', label: 'Para Birimi', example: 'TRY' },
+      { key: 'netAmount', label: 'Vergiler Hariç Toplam Tutar', example: 32997.04 },
+      { key: 'grossAmount', label: 'Vergiler Dahil Toplam Tutar', example: 39596.06, required: true },
+    ],
+  },
 };
 
 /** "?" yardım butonunun indirdiği örnek şablon. */
@@ -311,9 +346,17 @@ export function buildTemplate(kind = 'gider') {
     ['AÇIKLAMA'],
     ['1. İlk satır başlık satırıdır, değiştirmeyin.'],
     ['2. İkinci satır örnektir; kendi verinizi yazmadan önce silebilirsiniz.'],
-    ['3. Tarihler YYYY-AA-GG biçiminde olmalıdır (örn. 2026-10-01).'],
+    ['3. Tarihler YYYY-AA-GG biçiminde olmalıdır (örn. 2026-10-01). Excel tarih hücreleri de okunur.'],
     ['4. Tutarlarda binlik ayracı kullanmayın; ondalık için virgül veya nokta kullanabilirsiniz.'],
     ['5. Zorunlu sütunlar: ' + template.columns.filter((c) => c.required).map((c) => c.label).join(', ')],
   ];
+  if (template.direction) {
+    aciklama.push(
+      ['6. e-Fatura portalından indirdiğiniz dosyayı olduğu gibi yükleyebilirsiniz;'],
+      ['   yalnızca yukarıdaki başlıkları taşıyan sütunlar okunur, diğerleri yok sayılır.'],
+      ['7. Hesaplamalarda "Vergiler Dahil Toplam Tutar" kullanılır; KDV = dahil − hariç.'],
+      ['8. Aynı fatura numarası ikinci kez yüklenemez (mükerrer kayıt koruması).'],
+    );
+  }
   return exportWorkbook([{ name: template.sheet, rows }, { name: 'Yardım', rows: aciklama }]);
 }

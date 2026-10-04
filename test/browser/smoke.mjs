@@ -283,7 +283,7 @@ await step('Oda kartından demirbaşa doğrudan gider yazılır', async () => {
 /* ------------------------------------------ rezervasyon kuralları ----- */
 
 await step('Rezervasyonda kişi sayısı oda kapasitesiyle sınırlı', async () => {
-  await go('Gelirler');
+  await go('Rezervasyonlar');
   await page.click('button:has-text("Yeni Rezervasyon")');
   await page.waitForSelector('.modal');
   await page.selectOption('select.room-select', { index: 1 }); // 102 — 2 kişilik
@@ -425,7 +425,7 @@ await step('Takvim: kaydedilen düşük fiyat hücrede işaretlenir', async () =
 });
 
 await step('Rezervasyon: düşük gecelik net fiyat uyarılır', async () => {
-  await go('Gelirler');
+  await go('Rezervasyonlar');
   await page.click('button:has-text("Yeni Rezervasyon")');
   await page.waitForSelector('.modal');
   await page.fill('.modal input[type="text"]', 'Ucuz Satış Testi');

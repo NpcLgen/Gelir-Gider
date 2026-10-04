@@ -1,6 +1,7 @@
 /** Vergi Raporu — KDV, konaklama vergisi, turizm payı ve gelir vergisi (PRD §5.1). */
 
-import { defaultTaxRates, employeeTotal, restaurantIncomeSummary, taxReport } from '../core/finance.js';
+import { defaultTaxRates, employeeTotal, invoiceSummary, restaurantIncomeSummary, taxReport } from '../core/finance.js';
+import { rateFor } from '../core/fx.js';
 import { formatMoney, formatPercent } from '../core/format.js';
 import { clear, errorList, field, h, toast } from './dom.js';
 
@@ -40,6 +41,12 @@ export function taxInputs(app) {
     from: p.from, to: p.to, kdvRate: rates.kdvRestaurant ?? 10,
   });
 
+  // Gelen/giden faturalar: KDV tutarı faturada belli olduğundan orandan değil
+  // doğrudan "vergiler dahil − vergiler hariç" farkından alınır.
+  const fxRate = (date) => rateFor(state.settings.fx, date);
+  const salesInvoices = invoiceSummary(state.salesInvoices ?? [], { from: p.from, to: p.to, rateFor: fxRate });
+  const purchaseInvoices = invoiceSummary(state.purchaseInvoices ?? [], { from: p.from, to: p.to, rateFor: fxRate });
+
   // Belgeli giderler: tedarikçisi olan kalemler + toptancı faturaları + restoran harcamaları.
   const documented = report.expenses
     .filter((e) => e.vendor)
@@ -51,7 +58,12 @@ export function taxInputs(app) {
     revenue: report.totals.revenue,
     restaurantRevenue: restaurant.gross,
     restaurantKdv: restaurant.kdv,
-    expensesTotal: round(report.totals.expenses + payroll + foreignPayroll + supplierTotal + restaurantExpenses),
+    invoiceRevenue: salesInvoices.gross,
+    invoiceRevenueKdv: salesInvoices.kdv,
+    invoiceExpense: purchaseInvoices.gross,
+    invoiceExpenseKdv: purchaseInvoices.kdv,
+    expensesTotal: round(report.totals.expenses + payroll + foreignPayroll + supplierTotal
+      + restaurantExpenses + purchaseInvoices.gross),
     payroll: round(payroll),
     foreignPayroll: round(foreignPayroll),
     nonDeductible: foreignDeductible ? 0 : round(foreignPayroll),
@@ -74,6 +86,9 @@ export function taxView(app) {
     expenses: inputs.expensesTotal,
     expenseKdvBase: inputs.kdvBase,
     nonDeductibleExpenses: inputs.nonDeductible,
+    invoiceRevenue: inputs.invoiceRevenue,
+    invoiceRevenueKdv: inputs.invoiceRevenueKdv,
+    invoiceExpenseKdv: inputs.invoiceExpenseKdv,
     rates,
   });
 
@@ -106,8 +121,14 @@ export function taxView(app) {
         h('tbody', {},
           taxRow('KDV (konaklama)', 'Oda geliri (KDV dahil)', `%${rates.kdvIncome}`, report.roomKdv),
           taxRow('KDV (restoran)', 'Restoran geliri (KDV dahil)', `%${rates.kdvRestaurant}`, report.restaurantKdv),
-          taxRow('KDV (hesaplanan toplam)', 'Konaklama + restoran', '—', report.collectedKdv, true),
+          report.salesInvoiceKdv > 0
+            ? taxRow('KDV (giden faturalar)', 'Gelir faturaları (dahil − hariç)', 'faturadan', report.salesInvoiceKdv)
+            : null,
+          taxRow('KDV (hesaplanan toplam)', 'Konaklama + restoran + gelir faturaları', '—', report.collectedKdv, true),
           taxRow('KDV (indirilecek)', 'Belgeli gider ve toptancı faturaları', `%${rates.kdvExpense}`, -report.deductibleKdv),
+          report.purchaseInvoiceKdv > 0
+            ? taxRow('— gelen faturalardan', 'Gider faturaları (dahil − hariç)', 'faturadan', -report.purchaseInvoiceKdv)
+            : null,
           taxRow(report.netKdv >= 0 ? 'Ödenecek Net KDV' : 'Devreden KDV', 'Hesaplanan − İndirilecek', '—', report.netKdv, true),
           taxRow('Konaklama Vergisi', 'KDV hariç konaklama geliri', `%${rates.accommodationTax}`, report.accommodationTax),
           taxRow('Turizm Payı', 'KDV hariç konaklama geliri', `%${rates.tourismShare}`, report.tourismShare),
@@ -124,7 +145,9 @@ export function taxView(app) {
       h('div', { class: 'kv-list' },
         kv('Konaklama geliri (KDV dahil)', formatMoney(inputs.revenue)),
         kv('Restoran geliri (KDV dahil)', formatMoney(inputs.restaurantRevenue)),
+        kv('Gelir faturaları (KDV dahil)', formatMoney(inputs.invoiceRevenue)),
         kv('Toplam gider', formatMoney(inputs.expensesTotal)),
+        kv('— gider faturaları', formatMoney(inputs.invoiceExpense)),
         kv('— personel ve ekstra çalışan', formatMoney(inputs.payroll)),
         kv('— yabancı çalışan', formatMoney(inputs.foreignPayroll)),
         kv('— toptancı faturaları', formatMoney(inputs.supplierTotal)),

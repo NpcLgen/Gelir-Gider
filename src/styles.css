@@ -232,12 +232,20 @@ input.count { max-width: 110px; }
 .modal-header .icon-btn { margin-left: auto; }
 .modal-body { padding: 18px 20px 22px; }
 
+/* Bildirim kutusu: 3 saniye sonra yavaşça solarak tamamen kaybolur.
+   Yalnızca aşağı kaydırmak yetmiyordu; kısa kutular ekranın altında görünür kalıyordu. */
 .toast {
-  position: fixed; bottom: 22px; left: 50%; transform: translate(-50%, 120%);
+  position: fixed; bottom: 22px; left: 50%; transform: translate(-50%, 14px);
   background: var(--card-2); border: 1px solid var(--line); border-radius: 10px;
-  padding: 11px 18px; box-shadow: var(--shadow); transition: transform .25s ease; z-index: 100;
+  padding: 11px 18px; box-shadow: var(--shadow); z-index: 100;
+  max-width: calc(100vw - 32px);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .45s ease, transform .45s ease, visibility 0s linear .45s;
 }
-.toast.show { transform: translate(-50%, 0); }
+.toast.show {
+  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+  transition: opacity .2s ease, transform .2s ease, visibility 0s;
+}
 .toast-ok { border-color: var(--good); }
 .toast-warn { border-color: var(--warn); }
 .toast-error { border-color: var(--bad); }

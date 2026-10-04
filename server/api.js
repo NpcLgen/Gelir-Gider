@@ -6,6 +6,7 @@
  *  - Sunucu: her uç nokta kendi modül iznini doğrular; yetkisiz istek 403 döner.
  */
 
+import { createInvoice, validateInvoice } from '../src/core/finance.js';
 import { createCashDay, createEmployee, createExtraWorker, createForeignWorker,
   createRestaurantExpense, createRestaurantIncome, createSupplier, createSupplierTxn,
   defaultTaxRates, validateCashDay, validateEmployee, validateExtraWorker, validateForeignWorker,
@@ -65,6 +66,8 @@ function visibleState(db, user) {
     restaurantIncomes: mask('restoranGelir', db.restaurantIncomes, ['note']),
     restaurantExpenses: mask('restoranGider', db.restaurantExpenses, ['note']),
     foreignWorkers: mask('yabanciCalisanlar', db.foreignWorkers, ['name', 'note']),
+    purchaseInvoices: mask('giderFaturalari', db.purchaseInvoices, ['customer', 'invoiceNo', 'note']),
+    salesInvoices: mask('gelirler', db.salesInvoices, ['customer', 'invoiceNo', 'note']),
     users: user.isAdmin ? db.users.map(publicUser) : [],
     auditLog: user.isAdmin ? db.auditLog.slice(-300).reverse() : [],
     modules: MODULES,
@@ -93,7 +96,7 @@ const RESOURCES = {
     sort: (a, b) => String(a.number).localeCompare(String(b.number), 'tr', { numeric: true }),
   },
   reservations: {
-    permission: 'gelirler', factory: createReservation,
+    permission: 'rezervasyonlar', factory: createReservation,
     validate: (item, db) => validateReservation(item, { rooms: db.rooms, reservations: db.reservations }),
     label: 'Rezervasyon', summary: (r) => `${r.guestName} ${r.checkIn}→${r.checkOut}`,
     sort: (a, b) => b.checkIn.localeCompare(a.checkIn),
@@ -146,6 +149,20 @@ const RESOURCES = {
     validate: (item, db) => validateForeignWorker(item, { workers: db.foreignWorkers }),
     label: 'Yabancı çalışan', summary: (w) => `${w.name} ${w.period}`,
     sort: (a, b) => b.period.localeCompare(a.period) || a.name.localeCompare(b.name, 'tr'),
+  },
+  purchaseInvoices: {
+    permission: 'giderFaturalari',
+    factory: (patch) => createInvoice({ ...patch, direction: 'gelen' }),
+    validate: (item, db) => validateInvoice(item, { invoices: db.purchaseInvoices }),
+    label: 'Gider faturası', summary: (i) => `${i.invoiceNo} · ${i.customer}`,
+    sort: (a, b) => b.date.localeCompare(a.date) || a.invoiceNo.localeCompare(b.invoiceNo, 'tr'),
+  },
+  salesInvoices: {
+    permission: 'gelirler',
+    factory: (patch) => createInvoice({ ...patch, direction: 'giden' }),
+    validate: (item, db) => validateInvoice(item, { invoices: db.salesInvoices }),
+    label: 'Gelir faturası', summary: (i) => `${i.invoiceNo} · ${i.customer}`,
+    sort: (a, b) => b.date.localeCompare(a.date) || a.invoiceNo.localeCompare(b.invoiceNo, 'tr'),
   },
   cashDays: {
     permission: 'kasa', factory: createCashDay,
@@ -226,7 +243,7 @@ route('GET', /^\/api\/state$/, async ({ res, user }) => {
 
 const resourceName = (path) => path.replace(/^\/api\//, '').split('/')[0];
 
-route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers)$/, async ({ req, res, user, path }) => {
+route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices)$/, async ({ req, res, user, path }) => {
   const name = resourceName(path);
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -248,7 +265,7 @@ route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppl
   sendJson(res, 200, saved);
 });
 
-route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers)\/([\w-]+)$/, async ({ res, user, match }) => {
+route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices)\/([\w-]+)$/, async ({ res, user, match }) => {
   const [, name, id] = match;
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -600,6 +617,8 @@ route('POST', /^\/api\/demo$/, async ({ res, user }) => {
     db.restaurantIncomes = [];
     db.restaurantExpenses = [];
     db.foreignWorkers = [];
+    db.purchaseInvoices = [];
+    db.salesInvoices = [];
     record(db, { user, action: 'import', entity: 'demo', summary: 'Demo verisi yüklendi; finansal kayıtlar sıfırlandı (kullanıcılar korundu)' });
     return { rooms: db.rooms.length, reservations: db.reservations.length, expenses: db.expenses.length };
   });
@@ -610,7 +629,7 @@ route('POST', /^\/api\/demo$/, async ({ res, user }) => {
 
 route('GET', /^\/api\/excel\/template$/, async ({ res, user, query }) => {
   requirePermission(user, 'excelIceAktarim');
-  const kind = query.get('kind') === 'gelir' ? 'gelir' : 'gider';
+  const kind = TEMPLATES[query.get('kind')] ? query.get('kind') : 'gider';
   const buffer = buildTemplate(kind);
   res.writeHead(200, {
     'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -622,7 +641,7 @@ route('GET', /^\/api\/excel\/template$/, async ({ res, user, query }) => {
 
 route('POST', /^\/api\/excel\/import$/, async ({ req, res, user, query }) => {
   requirePermission(user, 'excelIceAktarim');
-  const kind = query.get('kind') === 'gelir' ? 'gelir' : 'gider';
+  const kind = TEMPLATES[query.get('kind')] ? query.get('kind') : 'gider';
   const dryRun = query.get('dryRun') === '1';
   const buffer = await readBody(req);
   const parsed = parseWorkbook(buffer);
@@ -703,7 +722,23 @@ export async function importRows(parsed, kind, user, dryRun = false) {
     if (row.every((cell) => !String(cell ?? '').trim())) return; // boş satır
     const get = (key) => String(row[columnAt[key]] ?? '').trim();
 
-    if (kind === 'gider') {
+    if (template.direction) {
+      // e-Fatura dosyası: yalnızca şablondaki yedi sütun okunur.
+      const item = createInvoice({
+        direction: template.direction,
+        customer: get('customer'),
+        date: parseDate(get('date')),
+        invoiceNo: get('invoiceNo'),
+        amount: parseAmount(get('amount')),
+        currency: get('currency').toUpperCase() || 'TRY',
+        netAmount: parseAmount(get('netAmount')) || 0,
+        grossAmount: parseAmount(get('grossAmount')) || 0,
+      });
+      const existing = db[template.target] ?? [];
+      const errors = validateInvoice(item, { invoices: [...existing, ...valid] });
+      if (errors.length) invalidRows.push({ line: lineNo, errors, raw: row });
+      else valid.push(item);
+    } else if (kind === 'gider') {
       const room = db.rooms.find((r) => String(r.number) === get('roomNumber'));
       const item = createExpense({
         date: parseDate(get('date')),
@@ -741,7 +776,7 @@ export async function importRows(parsed, kind, user, dryRun = false) {
   });
 
   if (!dryRun && valid.length) {
-    const collection = kind === 'gider' ? 'expenses' : 'reservations';
+    const collection = template.target ?? (kind === 'gider' ? 'expenses' : 'reservations');
     await update((current) => {
       current[collection].push(...valid);
       current[collection].sort(RESOURCES[collection].sort);
@@ -834,6 +869,22 @@ export function buildExportSheets(db, { from = '', to = '', user }) {
       ],
     });
   }
+
+  // Gelen / giden faturalar aynı sütun yapısıyla dışa aktarılır.
+  const invoiceSheet = (name, rows) => ({
+    name,
+    rows: [
+      ['Müşteri', 'Fatura Tarihi', 'Fatura No', 'Tutar', 'Para Birimi',
+        'Vergiler Hariç Toplam Tutar', 'Vergiler Dahil Toplam Tutar', 'Aktif'],
+      ...rows.filter((i) => inRange(i.date)).map((i) => [
+        i.customer, i.date, i.invoiceNo, i.amount, i.currency,
+        i.netAmount, i.grossAmount, i.active === false ? 'Hayır' : 'Evet',
+      ]),
+    ],
+  });
+
+  if (can(user, 'gelirler')) sheets.push(invoiceSheet('Giden Faturalar', db.salesInvoices ?? []));
+  if (can(user, 'giderFaturalari')) sheets.push(invoiceSheet('Gelen Faturalar', db.purchaseInvoices ?? []));
 
   if (can(user, 'kasa')) {
     sheets.push({

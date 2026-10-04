@@ -14,7 +14,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 export const DATA_DIR = process.env.DATA_DIR || join(root, 'data');
 const DB_PATH = join(DATA_DIR, 'db.json');
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Boş veritabanı iskeleti. */
 export function emptyDb() {
@@ -42,6 +42,10 @@ export function emptyDb() {
     restaurantExpenses: [],
     /** PRD v2 §3.1 — yabancı çalışan maaşları. */
     foreignWorkers: [],
+    /** Gelen e-faturalar → gider faturaları. */
+    purchaseInvoices: [],
+    /** Giden e-faturalar → gelir faturaları. */
+    salesInvoices: [],
     /** PRD §8 — kritik değişikliklerin kullanıcı ve tarih kaydı. */
     auditLog: [],
   };

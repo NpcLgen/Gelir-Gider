@@ -44,9 +44,10 @@ cmd /c npm start
 ## Testler
 
 ```bash
-npm test                    # 133 birim ve API testi (node:test, bağımlılıksız)
-npm run test:browser        # 80 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
+npm test                    # 150 birim ve API testi (node:test, bağımlılıksız)
+npm run test:browser        # 93 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 npm run test:browser:v2     # yalnızca PRD v2.0 akışları (restoran, kur, yedek, mobil)
+npm run test:browser:fatura # yalnızca gelen/giden fatura akışı
 ```
 
 Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`, sunucu ayakta olmalı.
@@ -55,12 +56,14 @@ Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`
 
 | Modül | Ne yapar | PRD |
 | --- | --- | --- |
-| **Giriş & Yetki** | Kullanıcı girişi (şifre göster/gizle), 22 modül için aç/kapa yetkiler, dinamik menü, denetim kaydı | §1, §6, §7 |
+| **Giriş & Yetki** | Kullanıcı girişi (şifre göster/gizle), 24 modül için aç/kapa yetkiler, dinamik menü, denetim kaydı | §1, §6, §7 |
 | **Dashboard** | Kâr/zarar, marj, ADR, RevPAR, doluluk, gider dağılımı, başa baş, YOY | BI §3 |
-| **Gelirler** | Rezervasyon kaydı, kapasite ve çakışma kontrolü, TL/EUR, acenta komisyonu | §9 |
+| **Gelirler** | Giden (satış) fatura listesi; e-Fatura Excel'inden toplu aktarım, TL/EUR, KDV | §17 |
+| **Rezervasyonlar** | Rezervasyon kaydı, kapasite ve çakışma kontrolü, TL/EUR, acenta komisyonu | §9 |
 | **Fiyat Girişi** | Takvim ızgarası, toplu güncelleme, fiyat kopyalama, maliyet altı fiyat uyarısı | BI §1.1, §3.3 |
 | **Giderler (özet)** | Genel harcama + personel + ekstra çalışan + toptancı faturalarının birleşik listesi, kaynak ve grup dağılımı | §3.1 |
 | **Genel Harcamalar** | Aktif/pasif anahtarı, dekont eki, tekrarlayan giderler, 5 dağıtım yöntemi | §3.4, §3.5 |
+| **Gider Faturaları** | Gelen (alış) fatura listesi; e-Fatura Excel'inden toplu aktarım, mükerrer koruması | §17 |
 | **Çalışanlar** | Sabit personel maaş + SGK, dönem bazlı, önceki aydan kopyalama | §3.2 |
 | **Ekstra Çalışan** | Günübirlik ödemeler, yalnızca girildiği döneme yansır | §3.3 |
 | **Vergiler** | KDV (konaklama %10 / restoran %10 / indirilecek), konaklama vergisi, turizm payı, gelir vergisi, vergi matrahı | §5.1, v2 §2.2 |
@@ -112,6 +115,22 @@ $env:BACKUP_DIR="C:\Users\<kullanici>\OneDrive\OtelYedek"; npm start
 # macOS / Linux — ağ sürücüsüne yedekle
 BACKUP_DIR=/Volumes/NAS/otel-yedek npm start
 ```
+
+## e-Fatura Excel aktarımı
+
+e-Fatura portalından indirdiğiniz dosyayı olduğu gibi yükleyebilirsiniz:
+
+* **Gelen Fatura** dosyası → `Giderler → Gider Faturaları`
+* **Giden Fatura** dosyası → `Genel → Gelirler`
+
+Dosyadan yalnızca şu yedi sütun okunur (sıraları önemli değil, diğer sütunlar yok sayılır):
+**Müşteri · Fatura Tarihi · Fatura No · Tutar · Para Birimi · Vergiler Hariç Toplam Tutar ·
+Vergiler Dahil Toplam Tutar**. Örnek şablonun başlıkları da birebir bunlardır ve her iki
+sayfadaki **❓ Örnek Şablon** düğmesinden indirilir.
+
+Hesaplamalarda "Vergiler Dahil Toplam Tutar" kullanılır; KDV, dahil ve hariç tutarın
+farkından alınır. Aynı fatura numarası ikinci kez yüklenemez. "📂 Excel Kontrol Et" ile
+önce deneme yapabilirsiniz: kayıt eklenmez, yalnızca hatalı satırlar listelenir.
 
 ## Telefon, tablet ve tarayıcı uyumu
 

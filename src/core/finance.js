@@ -305,6 +305,97 @@ export function validateRestaurantExpense(expense) {
   return errors;
 }
 
+/* ------------------------------- Gelen / giden faturalar (e-fatura) ------ */
+
+/**
+ * Fatura kaydı. Gelen faturalar gidere, giden faturalar gelire yazılır.
+ * Alanlar e-fatura portalının Excel çıktısındaki sütunlarla birebir eşleşir:
+ * Müşteri · Fatura Tarihi · Fatura No · Tutar · Para Birimi ·
+ * Vergiler Hariç Toplam Tutar · Vergiler Dahil Toplam Tutar
+ */
+export const INVOICE_DIRECTIONS = ['gelen', 'giden'];
+
+export function createInvoice(patch = {}) {
+  const gross = num(patch.grossAmount, 0);
+  const amount = num(patch.amount, 0);
+  return {
+    id: patch.id || uid('inv'),
+    direction: INVOICE_DIRECTIONS.includes(patch.direction) ? patch.direction : 'gelen',
+    customer: text(patch.customer),
+    date: patch.date || '',
+    invoiceNo: text(patch.invoiceNo),
+    /** Portal çıktısındaki "Tutar" sütunu; boşsa KDV dahil tutar kullanılır. */
+    amount: amount || gross,
+    currency: text(patch.currency).toUpperCase() || 'TRY',
+    netAmount: num(patch.netAmount, 0),
+    grossAmount: gross || amount,
+    note: text(patch.note),
+    active: patch.active !== false,
+  };
+}
+
+/** Hesaplamalarda kullanılan tutar: KDV dahil toplam, yoksa "Tutar", yoksa KDV hariç. */
+export const invoiceAmount = (invoice) => round2(
+  num(invoice?.grossAmount, 0) || num(invoice?.amount, 0) || num(invoice?.netAmount, 0),
+);
+
+/** Faturanın taşıdığı KDV: KDV dahil − KDV hariç (ikisi de girilmişse). */
+export const invoiceKdv = (invoice) => {
+  const gross = num(invoice?.grossAmount, 0) || num(invoice?.amount, 0);
+  const net = num(invoice?.netAmount, 0);
+  return net > 0 && gross > net ? round2(gross - net) : 0;
+};
+
+export function validateInvoice(invoice, { invoices = [], currencies = ['TRY', 'EUR'] } = {}) {
+  const errors = [];
+  if (!text(invoice.customer)) errors.push('Müşteri adı zorunludur.');
+  if (!isValidDate(invoice.date)) errors.push('Geçerli bir fatura tarihi giriniz (YYYY-AA-GG).');
+  if (!text(invoice.invoiceNo)) errors.push('Fatura no zorunludur.');
+  if (invoiceAmount(invoice) <= 0) errors.push('Fatura tutarı 0’dan büyük olmalıdır.');
+  if (!currencies.includes(invoice.currency)) {
+    errors.push(`"${invoice.currency}" para birimi desteklenmiyor (${currencies.join(', ')}).`);
+  }
+  if (num(invoice.netAmount, 0) > 0 && num(invoice.grossAmount, 0) > 0
+    && num(invoice.netAmount, 0) > num(invoice.grossAmount, 0) + 0.01) {
+    errors.push('Vergiler hariç tutar, vergiler dahil tutardan büyük olamaz.');
+  }
+  // Aynı yönde aynı fatura no iki kez kaydedilemez (mükerrer içe aktarım koruması).
+  const clash = invoices.find((i) => i.id !== invoice.id
+    && text(i.invoiceNo).toLocaleUpperCase('tr') === text(invoice.invoiceNo).toLocaleUpperCase('tr'));
+  if (clash) errors.push(`${invoice.invoiceNo} numaralı fatura zaten kayıtlı.`);
+  return errors;
+}
+
+/**
+ * Dönem içi fatura özeti. Tutarlar TRY'ye çevrilir; `rateFor` çağıranın
+ * sağladığı kur fonksiyonudur (tarih bazlı kur için).
+ */
+export function invoiceSummary(invoices, { from = '', to = '', rateFor = () => 1 } = {}) {
+  const rows = (invoices ?? []).filter((i) => i.active !== false
+    && (!from || i.date >= from) && (!to || i.date <= to));
+
+  let gross = 0;
+  let net = 0;
+  let kdv = 0;
+  const byCurrency = new Map();
+  for (const invoice of rows) {
+    const rate = rateFor(invoice.date);
+    const toTry = (value) => (invoice.currency === 'EUR' ? value * (Number(rate) || 1) : value);
+    gross += toTry(invoiceAmount(invoice));
+    net += toTry(num(invoice.netAmount, 0) || invoiceAmount(invoice));
+    kdv += toTry(invoiceKdv(invoice));
+    byCurrency.set(invoice.currency, round2((byCurrency.get(invoice.currency) ?? 0) + invoiceAmount(invoice)));
+  }
+
+  return {
+    gross: round2(gross),
+    net: round2(net),
+    kdv: round2(kdv),
+    count: rows.length,
+    byCurrency: [...byCurrency.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
 /* --------------------------------------- §3.1 Yabancı çalışanlar --------- */
 
 export function createForeignWorker(patch = {}) {
@@ -385,6 +476,14 @@ export function taxReport({
   restaurantRevenue = 0,
   /** Vergi matrahından indirilemeyen giderler (ör. yabancı çalışan maaşları). */
   nonDeductibleExpenses = 0,
+  /**
+   * Giden faturalar (KDV dahil) ve taşıdıkları gerçek KDV. Faturada KDV tutarı
+   * belli olduğu için oran üzerinden yeniden hesaplanmaz.
+   */
+  invoiceRevenue = 0,
+  invoiceRevenueKdv = 0,
+  /** Gelen faturaların taşıdığı indirilecek KDV (tutar `expenses` içinde sayılır). */
+  invoiceExpenseKdv = 0,
   rates = defaultTaxRates(),
 } = {}) {
   const kdvIncomeRate = num(rates.kdvIncome, 0);
@@ -394,15 +493,18 @@ export function taxReport({
   // Konaklama ve restoran gelirleri ayrı oranlarla KDV üretir.
   const roomKdv = round2((revenue * kdvIncomeRate) / (100 + kdvIncomeRate));
   const restaurantKdv = round2((restaurantRevenue * kdvRestaurantRate) / (100 + kdvRestaurantRate));
-  const collectedKdv = round2(roomKdv + restaurantKdv);
+  const salesInvoiceKdv = round2(num(invoiceRevenueKdv, 0));
+  const collectedKdv = round2(roomKdv + restaurantKdv + salesInvoiceKdv);
 
   const kdvBase = expenseKdvBase == null ? expenses : expenseKdvBase;
-  const deductibleKdv = round2((kdvBase * kdvExpenseRate) / (100 + kdvExpenseRate));
+  const purchaseInvoiceKdv = round2(num(invoiceExpenseKdv, 0));
+  const deductibleKdv = round2((kdvBase * kdvExpenseRate) / (100 + kdvExpenseRate) + purchaseInvoiceKdv);
   const netKdv = round2(collectedKdv - deductibleKdv);
 
   const roomNetRevenue = round2(revenue - roomKdv);
   const restaurantNetRevenue = round2(restaurantRevenue - restaurantKdv);
-  const netRevenue = round2(roomNetRevenue + restaurantNetRevenue);
+  const invoiceNetRevenue = round2(num(invoiceRevenue, 0) - salesInvoiceKdv);
+  const netRevenue = round2(roomNetRevenue + restaurantNetRevenue + invoiceNetRevenue);
 
   // Konaklama vergisi ve turizm payı yalnızca konaklama geliri üzerinden alınır.
   const accommodationTax = round2((roomNetRevenue * num(rates.accommodationTax, 0)) / 100);
@@ -419,11 +521,14 @@ export function taxReport({
     rates: { ...rates },
     revenue: round2(revenue),
     restaurantRevenue: round2(restaurantRevenue),
-    totalRevenue: round2(revenue + restaurantRevenue),
+    invoiceRevenue: round2(invoiceRevenue),
+    totalRevenue: round2(revenue + restaurantRevenue + num(invoiceRevenue, 0)),
     expenses: round2(expenses),
     nonDeductibleExpenses: round2(nonDeductibleExpenses),
     roomKdv,
     restaurantKdv,
+    salesInvoiceKdv,
+    purchaseInvoiceKdv,
     collectedKdv,
     deductibleKdv,
     /** Ödenecek net KDV = hesaplanan − indirilecek (negatifse devreden KDV). */
@@ -432,6 +537,7 @@ export function taxReport({
     payableKdv: netKdv > 0 ? netKdv : 0,
     roomNetRevenue,
     restaurantNetRevenue,
+    invoiceNetRevenue,
     netRevenue,
     netExpense,
     accommodationTax,
