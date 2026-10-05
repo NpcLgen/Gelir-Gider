@@ -7,6 +7,7 @@ dengesini şeffaflaştırır, maliyetleri odalara dağıtır, vergi ve kasa duru
 * Gereksinimler: **[PRD.md](PRD.md)** — giriş/yetki, Excel, giderler, toptancı cari, vergi, kasa
   (sürüm **2.0**: restoran gelir/gider, yabancı çalışanlar, döviz kuru, yedekleme, mobil uyum)
 * Ek belge: **[PRD-BI.md](PRD-BI.md)** — oda kârlılığı, maliyet dağıtımı, fiyat tavsiyesi
+* Yayına alma: **[DEPLOY.md](DEPLOY.md)** — normal bir cPanel'de Firebase ile çalıştırma
 
 ## Hızlı başlangıç
 
@@ -45,12 +46,13 @@ cmd /c npm start
 ## Testler
 
 ```bash
-npm test                    # 198 birim ve API testi (node:test, bağımlılıksız)
-npm run test:browser        # 120 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
+npm test                    # 241 birim ve API testi (node:test, bağımlılıksız)
+npm run test:browser        # 132 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 npm run test:browser:v2     # yalnızca PRD v2.0 akışları (restoran, kur, yedek, mobil)
 npm run test:browser:fatura # yalnızca gelen/giden fatura akışı
 npm run test:browser:kur    # yalnızca tarihsel kur ve kur farkı akışı
 npm run test:browser:faz3   # yalnızca Faz 3.0 kabul kriterleri
+npm run test:browser:cpanel # yalnızca statik (cPanel + Firebase) kurulum akışı
 ```
 
 Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`, sunucu ayakta olmalı.
@@ -74,7 +76,7 @@ Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`
 | **Yabancı Çalışanlar** | Dönem bazlı maaş kaydı; gidere girer, vergi matrahından indirilmez (ayarlanabilir) | v2 §3.1 |
 | **Restoran Gelirleri** | Gün sonu kaydı (günde en fazla 2), günlük/aylık otomatik toplam, %10 KDV | v2 §2.1–§2.3 |
 | **Restoran Ekstra Giderler** | Toptancı carisini etkilemeyen restoran harcamaları | v2 §2.4 |
-| **Toptancılar** | Cari hesap: fatura/ödeme, yürüyen bakiye, ad/fatura no/tarih filtreleri | §4 |
+| **Toptancılar** | Bağımsız cari defter: fatura/ödeme, yürüyen bakiye, filtreler. Buradaki tutarlar **gelir, gider, kârlılık ve vergi hesaplarına yansımaz** | §4 |
 | **Gün Sonu / Kasa** | Beklenen kasa ile fiili kasa karşılaştırması, kasa açığı/fazlası | §5.2 |
 | **Finansal Raporlar** | Dönem özeti, oda kârlılığı, gider dökümü; PDF/Excel/CSV | §2.1 |
 | **Excel İşlemleri** | Örnek şablon, ön kontrollü içe aktarım, yetkiye göre dışa aktarım | §2.1 |
@@ -84,13 +86,28 @@ Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`
 
 ## Mimari
 
+İki arka uç, tek kod tabanı. Hangisinin kullanılacağını `src/app-config.js` belirler
+(`backend: 'auto'` ortamı kendisi anlar):
+
 ```
+1) Node sunucusu (npm start)
 Tarayıcı (src/)  ──HTTP + httpOnly çerez──▶  Node sunucusu (server/)  ──▶  data/db.json
    dinamik menü                                oturum · yetki · doğrulama · denetim
+
+2) Statik hosting (cPanel) — sunucu yok
+Tarayıcı (src/)  ──REST──▶  Firebase Authentication  (oturum, şifre)
+                 ──REST──▶  Firebase Realtime Database  (veri + kurallar)
 ```
 
-Yetkilendirme iki katmanlıdır: yetkisiz modül menüde görünmez **ve** ilgili API isteği
-sunucuda 403 ile reddedilir. Şifreler PBKDF2-SHA512 ile tuzlanarak saklanır.
+Ortak çekirdek iki arka uçta da birebir aynı davranır: modül yetkileri
+(`src/core/permissions.js`), koleksiyon tanımları ve doğrulama (`src/core/resources.js`),
+Excel biçimi (`src/core/excelFormat.js`), mükerrer fatura kuralları
+(`src/core/importPlan.js`) ve yedek biçimi (`src/core/backupFormat.js`).
+
+Yetkilendirme iki katmanlıdır: yetkisiz modül menüde görünmez **ve** istek arka uçta
+reddedilir — Node sunucusunda 403, Firebase'de ise `database.rules.json` kuralları.
+Şifreler Node kurulumunda PBKDF2-SHA512 ile tuzlanarak, Firebase kurulumunda ise
+Firebase Authentication tarafında saklanır.
 
 Sol menü gruplanmıştır ve grup başlıklarına tıklanarak açılıp kapanır; **aynı anda yalnızca
 bir ana kategori açık kalır** ve tercih tarayıcıda hatırlanır. Giriş sonrası Dashboard açılır.
@@ -99,7 +116,9 @@ modülü Faz 3.0 ile kaldırılmıştır; sistem yalnızca finansal verilere oda
 
 ## Veri ve yedekleme
 
-Tüm veriler sunucudaki `data/db.json` dosyasındadır (atomik yazma).
+Node kurulumunda tüm veriler sunucudaki `data/db.json` dosyasındadır (atomik yazma);
+cPanel + Firebase kurulumunda ise Realtime Database'in `/data` düğümünde durur.
+Yedek dosyası biçimi ikisinde de aynıdır, bu yüzden yedek iki yönde taşınabilir.
 **Yönetim → Yedekleme** sayfasından (admin yetkisi):
 
 * **💾 Şimdi Yedek Al** — sunucuda zaman damgalı yedek dosyası oluşturur
@@ -153,6 +172,10 @@ sayfadaki **❓ Örnek Şablon** düğmesinden indirilir.
 Hesaplamalarda "Vergiler Dahil Toplam Tutar" kullanılır; KDV, dahil ve hariç tutarın
 farkından alınır.
 
+Fatura tablolarında sütunlar **kesik dikey çizgilerle** ayrılır: metin alanları sola,
+para tutarları sağa yaslı kalır ama hangi sayının hangi sütuna ait olduğu bir bakışta
+görünür.
+
 **Aynı dosyayı tekrar yükleyebilirsiniz.** Daha önce işlenmiş bir fatura (aynı fatura no
 ve aynı bilgiler) ikinci kez işlenmez, "atlandı" olarak raporlanır; yalnızca yeni satırlar
 eklenir. Aynı numara farklı tutarla gelirse mevcut kayıt korunur ve satır çakışma olarak
@@ -188,18 +211,36 @@ Telefonda **tarayıcı menüsü → "Ana ekrana ekle"** ile kısayol oluşturabi
 aynı ağda çalışıyor olmalıdır. Çevrimdışı çalışan gerçek bir uygulama kurulumu (PWA)
 yol haritasındadır (PRD §11).
 
-## Appserv ile çalışmaz — neden?
+## Normal bir cPanel'de yayına alma (Firebase)
 
-Bu uygulama PHP değil **Node.js**'tir; AppServ (Apache + PHP + MySQL) Node çalışma ortamı
-içermediğinden dosyaları `C:\AppServ\www` altına kopyalamak işe yaramaz (`/api/*` istekleri
-404 döner). Doğru kullanım `npm start` ile Node sunucusunu çalıştırmaktır; Apache'yi 80
-portunda tutmak isterseniz `mod_proxy` ile ters proxy kurulumu PRD §15'te anlatılmıştır.
+Paylaşımlı hostingte Node çalıştırılamaz; bu yüzden aynı dosyalar **sunucusuz** modda da
+çalışır: kimlik doğrulama Firebase Authentication, veri Firebase Realtime Database
+üzerinden yürür. Yapılacaklar kısaca:
+
+1. `index.html`, `.htaccess` ve `src/` klasörünü `public_html` içine yükleyin.
+2. `database.rules.json` içeriğini Firebase Console → Realtime Database → **Kurallar**'a
+   yapıştırıp yayınlayın.
+3. Authentication → **E-posta/Şifre**'yi açın ve ilk yöneticiyi
+   `kullanıcıadı@otel.local` biçiminde oluşturun.
+4. Alan adınızı açın: karşılama sayfası gelir, **Giriş Yap** ile oturum açılır.
+
+Adım adım anlatım, güvenlik kuralları ve sorun giderme: **[DEPLOY.md](DEPLOY.md)**.
+
+AppServ (Apache + PHP) kurulumunda dosyaları `C:\AppServ\www` altına kopyalamak tek
+başına yetmez: `backend: 'firebase'` ile yukarıdaki statik mod kullanılabilir, yoksa
+`/api/*` istekleri 404 döner. Node sunucusunu Apache arkasında 80 portunda tutmak için
+`mod_proxy` ters proxy kurulumu PRD §15'tedir.
 
 ## Bilinen sınırlar
 
 * **Döviz kuru:** Kur artık sunucu tarafından çekilir (TCMB / ECB); sunucunun internet
   erişimi yoksa güncelleme başarısız olur, bu durumda **son geçerli kur korunur** ve
   Ayarlar → Döviz Kuru'ndan elle girilebilir (PRD §13.9).
-* **Tek sunucu:** Sistem tek makinede çalışır; ağdaki diğer bilgisayarlardan erişim için
-  sunucunun IP adresi ve güvenlik duvarı ayarı gerekir. HTTPS kullanılmıyorsa yerel ağ
-  dışına açmayın.
+* **Tek sunucu (yalnızca Node modunda):** Node kurulumu tek makinede çalışır; ağdaki diğer
+  bilgisayarlardan erişim için sunucunun IP adresi ve güvenlik duvarı ayarı gerekir. HTTPS
+  kullanılmıyorsa yerel ağ dışına açmayın. cPanel + Firebase kurulumunda bu sınır yoktur:
+  veriler buluttadır, her cihaz aynı veriyi görür.
+* **Firebase modunda kur kaynağı:** TCMB ve ECB uçları tarayıcıdan çağrılamaz (CORS);
+  bu modda Frankfurter (ECB) ve exchangerate.host kullanılır, erişilemezse kur elle girilir.
+* **Firebase modunda yedek:** Sunucu klasörü ve otomatik yedek zamanlayıcısı yoktur;
+  "Anlık Yedeği İndir" veya Firebase Console → *JSON dışa aktar* kullanılır.

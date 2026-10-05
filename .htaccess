@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# cPanel / Apache yapılandırması — statik (Firebase) kurulum için.
+#
+# Bu dosyayı uygulamanın kök klasörüne (genelde public_html) index.html ile
+# birlikte kopyalayın. Ayrıntılı kurulum: DEPLOY.md
+# ---------------------------------------------------------------------------
+
+Options -Indexes
+DirectoryIndex index.html
+
+# --- ES modülleri doğru MIME türüyle sunulmalı -----------------------------
+# Yanlış tür (ör. text/plain) tarayıcıda "Failed to load module script" hatası verir.
+<IfModule mod_mime.c>
+  AddType application/javascript .js
+  AddType application/javascript .mjs
+  AddType text/css .css
+  AddType application/json .json
+  AddType image/svg+xml .svg
+  AddType font/woff2 .woff2
+  AddDefaultCharset UTF-8
+</IfModule>
+
+# --- Sunulmaması gereken klasör ve dosyalar --------------------------------
+# Sunucu tarafı kodu ve yerel veritabanı statik kurulumda kullanılmaz.
+RedirectMatch 404 ^/(server|scripts|test|node_modules|data)(/|$)
+<FilesMatch "(^\.|\.(json|md|lock)$|^package.*\.json$)">
+  Require all denied
+</FilesMatch>
+# Firebase kuralları dosyası herkese açık olmamalı (yalnızca konsola yüklenir).
+<Files "database.rules.json">
+  Require all denied
+</Files>
+
+# --- Sıkıştırma ------------------------------------------------------------
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>
+
+# --- Önbellek --------------------------------------------------------------
+# index.html her zaman tazedir; böylece güncelleme yüklendiğinde hemen görünür.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 0 seconds"
+  ExpiresByType text/css "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+  ExpiresByType image/svg+xml "access plus 30 days"
+</IfModule>
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# --- HTTPS zorunlu (SSL sertifikası kuruluysa yorumdan çıkarın) ------------
+# <IfModule mod_rewrite.c>
+#   RewriteEngine On
+#   RewriteCond %{HTTPS} !=on
+#   RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+# </IfModule>

@@ -1,12 +1,16 @@
 /**
  * Yedekleme ve Geri Yükleme (admin).
  *
- * Yedekler sunucudaki klasörde tutulur. Bu klasör bir ağ sürücüsüne veya bulut
- * eşitleme klasörüne yönlendirilirse yedekler farklı bilgisayarlardan erişilebilir
- * olur (BACKUP_DIR ortam değişkeni).
+ * Node sunucusunda yedekler sunucudaki klasörde tutulur. Bu klasör bir ağ
+ * sürücüsüne veya bulut eşitleme klasörüne yönlendirilirse yedekler farklı
+ * bilgisayarlardan erişilebilir olur (BACKUP_DIR ortam değişkeni).
+ *
+ * cPanel + Firebase kurulumunda sunucu klasörü yoktur: veriler zaten Firebase
+ * Realtime Database'de durur ve her bilgisayardan erişilir. Bu modda ekran
+ * "anlık yedeği indir" ve "dosyadan geri yükle" işlemlerini gösterir.
  */
 
-import { api } from '../core/api.js';
+import { activeBackend, api } from '../core/api.js';
 import { clear, confirmDialog, errorList, field, h, openModal, toast } from './dom.js';
 
 const state = { data: null, loading: false, error: '' };
@@ -19,6 +23,7 @@ const formatSize = (bytes) => {
 
 export function backupView(app) {
   const container = h('div', { class: 'stack' });
+  const firebaseMode = activeBackend() === 'firebase';
 
   const render = () => {
     clear(container);
@@ -36,7 +41,7 @@ export function backupView(app) {
             } catch (err) { toast(err.message, 'error'); }
           },
         }, '⬇️ Anlık Yedeği İndir'),
-        h('button', {
+        firebaseMode ? null : h('button', {
           class: 'btn primary backup-now', type: 'button',
           onClick: async () => {
             try {
@@ -59,26 +64,44 @@ export function backupView(app) {
 
     const { backups, directory, settings } = state.data;
 
-    container.appendChild(h('div', { class: 'kpi-grid' },
-      kpi('Yedek Sayısı', String(backups.length), 'Sunucudaki yedek dosyaları'),
-      kpi('Son Yedek', backups[0] ? new Date(backups[0].createdAt).toLocaleString('tr-TR') : '—',
-        backups[0] ? formatSize(backups[0].size) : 'Henüz yedek yok',
-        backups.length ? '' : 'bad'),
-      kpi('Otomatik Yedekleme', settings.autoEnabled === false ? 'Kapalı' : `Her ${settings.intervalHours} saatte`,
-        `En fazla ${settings.keep} yedek saklanır`, settings.autoEnabled === false ? 'bad' : 'good')));
+    if (firebaseMode) {
+      container.appendChild(h('div', { class: 'kpi-grid' },
+        kpi('Veri Kaynağı', 'Firebase', 'Realtime Database (bulut)', 'good'),
+        kpi('Erişim', 'Her cihazdan', 'Veriler tek merkezde tutulur', 'good'),
+        kpi('Yedek Dosyası', 'İndirilebilir', 'Anlık yedeği bilgisayarınıza kaydedin')));
 
-    container.appendChild(autoSettingsCard(settings, load));
+      container.appendChild(h('section', { class: 'card stack' },
+        h('h3', {}, 'Firebase Kurulumu'),
+        h('code', { class: 'path-box' }, directory),
+        h('p', { class: 'muted small' },
+          'Veriler sunucuda değil Firebase Realtime Database üzerinde tutulduğu için tüm '
+          + 'bilgisayarlar aynı veriyi görür; ayrı bir eşitleme gerekmez. Düzenli yedek için '
+          + 'ayda bir "Anlık Yedeği İndir" düğmesiyle dosyayı bilgisayarınıza kaydedin.'),
+        h('p', { class: 'muted small' },
+          'Firebase Console → Realtime Database → ⋮ → "JSON dosyasını dışa aktar" ile de '
+          + 'tüm veritabanının yedeğini alabilirsiniz.')));
+    } else {
+      container.appendChild(h('div', { class: 'kpi-grid' },
+        kpi('Yedek Sayısı', String(backups.length), 'Sunucudaki yedek dosyaları'),
+        kpi('Son Yedek', backups[0] ? new Date(backups[0].createdAt).toLocaleString('tr-TR') : '—',
+          backups[0] ? formatSize(backups[0].size) : 'Henüz yedek yok',
+          backups.length ? '' : 'bad'),
+        kpi('Otomatik Yedekleme', settings.autoEnabled === false ? 'Kapalı' : `Her ${settings.intervalHours} saatte`,
+          `En fazla ${settings.keep} yedek saklanır`, settings.autoEnabled === false ? 'bad' : 'good')));
 
-    container.appendChild(h('section', { class: 'card stack' },
-      h('h3', {}, 'Yedek Klasörü'),
-      h('code', { class: 'path-box' }, directory),
-      h('p', { class: 'muted small' },
-        'Bu klasörü bir ağ sürücüsüne veya bulut eşitleme klasörüne (OneDrive, Google Drive, ' +
-        'Dropbox, NAS) yönlendirirseniz yedeklere diğer bilgisayarlardan da erişebilirsiniz. ' +
-        'Sunucuyu başlatırken BACKUP_DIR ortam değişkenini ayarlayın.'),
-      h('pre', { class: 'code-block' },
-        'Windows:  set BACKUP_DIR=C:\\Users\\Ad\\OneDrive\\OtelYedek && npm start\n' +
-        'Mac/Linux: BACKUP_DIR=~/Dropbox/OtelYedek npm start')));
+      container.appendChild(autoSettingsCard(settings, load));
+
+      container.appendChild(h('section', { class: 'card stack' },
+        h('h3', {}, 'Yedek Klasörü'),
+        h('code', { class: 'path-box' }, directory),
+        h('p', { class: 'muted small' },
+          'Bu klasörü bir ağ sürücüsüne veya bulut eşitleme klasörüne (OneDrive, Google Drive, ' +
+          'Dropbox, NAS) yönlendirirseniz yedeklere diğer bilgisayarlardan da erişebilirsiniz. ' +
+          'Sunucuyu başlatırken BACKUP_DIR ortam değişkenini ayarlayın.'),
+        h('pre', { class: 'code-block' },
+          'Windows:  set BACKUP_DIR=C:\\Users\\Ad\\OneDrive\\OtelYedek && npm start\n' +
+          'Mac/Linux: BACKUP_DIR=~/Dropbox/OtelYedek npm start')));
+    }
 
     container.appendChild(h('section', { class: 'card stack' },
       h('h3', {}, 'Dosyadan Geri Yükle'),
@@ -98,6 +121,8 @@ export function backupView(app) {
             }
           },
         }))));
+
+    if (firebaseMode) return;
 
     container.appendChild(h('section', { class: 'card table-card' },
       h('header', { class: 'card-header' },

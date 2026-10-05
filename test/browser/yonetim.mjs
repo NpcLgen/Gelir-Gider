@@ -272,17 +272,18 @@ await step('Giderler alt kategorisi tüm gider kalemlerini birleştiriyor', asyn
   // PRD III §2 — sayfa sade tabloya indirildi; kaynaklar üstte kısayol düğmesi olarak durur.
   if (await page.$('.donut')) throw new Error('giderler sayfasında grafik kaldı');
   const kisayollar = await page.$$eval('.btn.small.ghost', (els) => els.map((e) => e.textContent.trim()));
-  for (const kaynak of ['Genel Harcamalar', 'Personel', 'Ekstra Çalışan', 'Toptancı']) {
+  for (const kaynak of ['Genel Harcamalar', 'Personel', 'Ekstra Çalışan']) {
     if (!kisayollar.some((k) => k.includes(kaynak))) throw new Error(`${kaynak} kısayolu yok: ${kisayollar.join(' · ')}`);
   }
+  // Toptancı defteri bağımsızdır: gider listesine ve kısayollara girmez.
+  if (kisayollar.some((k) => k.includes('Toptancı'))) throw new Error('toptancı kısayolu hâlâ var');
   console.log(`   ${(await page.textContent('.filter-bar')).replace(/\s+/g, ' ').trim()}`);
   const rows = (await page.$$('.card:has-text("Tüm Gider Kalemleri") tbody tr')).length;
   if (rows < 5) throw new Error(`kalem sayısı az: ${rows}`);
 
-  // Personel ve toptancı faturaları da listeye giriyor mu?
   const tablo = await page.textContent('.card:has-text("Tüm Gider Kalemleri")');
   if (!tablo.includes('Ayşe Yıldız')) throw new Error('personel gideri listede yok');
-  if (!tablo.includes('Anadolu Gıda')) throw new Error('toptancı faturası listede yok');
+  if (tablo.includes('Anadolu Gıda')) throw new Error('toptancı faturası gider listesine girmiş');
 });
 
 await step('Özet kartından ilgili gider sayfasına geçiliyor', async () => {
@@ -291,6 +292,14 @@ await step('Özet kartından ilgili gider sayfasına geçiliyor', async () => {
   await page.waitForTimeout(400);
   const h1 = await page.textContent('h1');
   if (!h1.includes('Çalışanlar')) throw new Error(h1);
+});
+
+await step('Toptancı defteri gelir-gider hesabına girmediğini bildiriyor', async () => {
+  await go('Toptancılar');
+  await page.waitForSelector('.supplier-scope-note');
+  const not = (await page.textContent('.supplier-scope-note')).replace(/\s+/g, ' ').trim();
+  if (!/yansımaz/.test(not)) throw new Error(not);
+  console.log(`   ${not.slice(0, 110)}`);
 });
 
 /* ------------------------------------------------- §6 Yetkilendirme ---- */

@@ -1,4 +1,10 @@
-/** Sunucu API istemcisi. Hatalar ValidationError/ApiError olarak yüzeye çıkar. */
+/**
+ * API istemcisi. Hatalar ValidationError/ApiError olarak yüzeye çıkar.
+ *
+ * Varsayılan taşıyıcı Node sunucusuna HTTP ile gider. cPanel gibi yalnızca
+ * statik dosya sunan ortamlarda `setApiImplementation()` ile Firebase
+ * uygulaması devreye alınır; görünümler ve `store.js` değişmez.
+ */
 
 export class ValidationError extends Error {
   constructor(errors) {
@@ -52,7 +58,21 @@ async function request(method, path, { body, raw, query } = {}) {
   throw new ApiError(response.status, payload.error ?? `Sunucu hatası (${response.status}).`, payload);
 }
 
-export const api = {
+/** Dosyayı tarayıcıya indirtir (her iki arka uçta da ortak). */
+export function downloadBlob(blob, name) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+  return name;
+}
+
+/** Node sunucusuna konuşan varsayılan uygulama. */
+const restImplementation = {
   get: (path, query) => request('GET', path, { query }),
   post: (path, body) => request('POST', path, { body }),
   put: (path, body) => request('PUT', path, { body }),
@@ -69,15 +89,28 @@ export const api = {
     }
     const disposition = response.headers.get('content-disposition') ?? '';
     const name = disposition.match(/filename="([^"]+)"/)?.[1] ?? fallbackName;
-    const blob = await response.blob();
-    const href = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(href), 1000);
-    return name;
+    return downloadBlob(await response.blob(), name);
   },
+};
+
+let implementation = restImplementation;
+
+/** Arka uç uygulamasını değiştirir (ör. Firebase). */
+export function setApiImplementation(next) {
+  implementation = next ?? restImplementation;
+}
+
+/** Hangi arka ucun etkin olduğunu söyler. */
+export const activeBackend = () => (implementation === restImplementation ? 'rest' : 'firebase');
+
+/** Oturum düştü kancasını arka uç uygulamaları da tetikleyebilir. */
+export const notifyUnauthorized = () => onUnauthorized();
+
+export const api = {
+  get: (path, query) => implementation.get(path, query),
+  post: (path, body) => implementation.post(path, body),
+  put: (path, body) => implementation.put(path, body),
+  del: (path) => implementation.del(path),
+  postRaw: (path, raw, query) => implementation.postRaw(path, raw, query),
+  download: (path, query, fallbackName) => implementation.download(path, query, fallbackName),
 };

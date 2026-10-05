@@ -1,6 +1,9 @@
 /**
  * Giderler (Tümü) — PRD §3.1 gider ana menüsü, PRD III §2 ile sadeleştirildi.
  *
+ * Toptancı cari hareketleri buraya girmez: o bölüm yalnızca restoranın kendi
+ * içindeki borç-alacak takibidir ve gelir/gider hesaplarını etkilemez.
+ *
  * Genel harcamalar, gider faturaları, personel, ekstra/yabancı çalışan ve
  * toptancı faturaları tek listede birleşir. Sayfa grafik veya gösterge paneli
  * içermez: Gelir paneliyle aynı sade veri tablosu düzenini kullanır.
@@ -18,7 +21,6 @@ const SOURCES = [
   { key: 'genel', label: 'Genel Harcamalar', module: 'genelHarcamalar', color: '#3987e5', view: 'giderler' },
   { key: 'personel', label: 'Personel (Maaş + SGK)', module: 'calisanlar', color: '#d95926', view: 'calisanlar' },
   { key: 'ekstra', label: 'Ekstra Çalışan', module: 'ekstraCalisan', color: '#199e70', view: 'ekstra' },
-  { key: 'toptanci', label: 'Toptancı Faturaları', module: 'toptancilar', color: '#c98500', view: 'toptancilar' },
   { key: 'restoran', label: 'Restoran Ekstra Giderler', module: 'restoranGider', color: '#d55181', view: 'restoranGider' },
   { key: 'yabanci', label: 'Yabancı Çalışanlar', module: 'yabanciCalisanlar', color: '#9085e9', view: 'yabanci' },
   { key: 'fatura', label: 'Gider Faturaları', module: 'giderFaturalari', color: '#4aa3a3', view: 'giderFaturalari' },
@@ -75,23 +77,6 @@ export function collectExpenses(app) {
         extra: worker.note,
         amount: worker.amount,
         group: 'fixed',
-      });
-    }
-  }
-
-  if (app.can('toptancilar')) {
-    for (const txn of state.supplierTxns) {
-      if (txn.active === false || txn.type !== 'invoice') continue;
-      if (txn.date < p.from || txn.date > p.to) continue;
-      const supplier = state.suppliers.find((s) => s.id === txn.supplierId);
-      rows.push({
-        source: 'toptanci',
-        date: txn.date,
-        title: supplier?.name ?? 'Toptancı',
-        detail: `Fatura ${txn.invoiceNo || ''}`.trim(),
-        extra: txn.note,
-        amount: txn.amount,
-        group: 'operational',
       });
     }
   }

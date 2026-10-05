@@ -1,4 +1,10 @@
-/** Restoran → Toptancılar: cari hesap, fatura/ödeme ve arama (PRD §4). */
+/**
+ * Restoran → Toptancılar: cari hesap, fatura/ödeme ve arama (PRD §4).
+ *
+ * Bu bölüm **bağımsız bir cari defterdir**: buraya girilen fatura ve ödemeler
+ * gelir/gider toplamlarına, kârlılığa ve vergi hesabına girmez. Yalnızca
+ * restoranın tedarikçilerle olan borç-alacak takibini tutar.
+ */
 
 import { supplierBalance } from '../core/finance.js';
 import { formatDate, formatMoney } from '../core/format.js';
@@ -72,7 +78,11 @@ export function suppliersView(app) {
     h('div', { class: 'row between center wrap gap' },
       h('div', {},
         h('h1', {}, 'Toptancılar'),
-        h('p', { class: 'muted' }, 'Restoran ve mutfak tedarikçilerinin cari hesapları: fatura borcu artırır, ödeme azaltır.')),
+        h('p', { class: 'muted' }, 'Restoran ve mutfak tedarikçilerinin cari hesapları: fatura borcu artırır, ödeme azaltır.'),
+        h('p', { class: 'muted small supplier-scope-note' },
+          'ℹ️ Bu defter bağımsızdır: buradaki tutarlar gelir, gider, kârlılık ve vergi '
+          + 'hesaplarına yansımaz. Gidere yazılması gereken alışları "Gider Faturaları" '
+          + 'veya "Genel Harcamalar" bölümüne girin.')),
       h('button', { class: 'btn primary', type: 'button', onClick: () => openSupplierForm(app, null) }, '＋ Yeni Toptancı')),
 
     h('div', { class: 'card filter-bar' },

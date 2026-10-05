@@ -2,7 +2,7 @@
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 2.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 198 birim/API testi (`npm test`) + 120 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 241 birim/API testi (`npm test`) + 132 adımlı tarayıcı akış testi (`npm run test:browser`).
 **Sürüm 2.0 teslim listesi:** 18/18 madde tamamlandı — bkz. [§12](#12-sürüm-20-teslim-listesi-1818).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
@@ -22,6 +22,10 @@ Tarayıcı (src/)  ──HTTP+çerez──▶  Node sunucusu (server/)  ──�
 * `npm start` tek komutla hem arayüzü hem API'yi ayağa kaldırır; harici bağımlılık yoktur.
 * Veriler sunucudaki `data/db.json` dosyasında tutulur (atomik yazma).
 * **Her uç nokta kendi modül iznini doğrular**; arayüz atlatılsa bile istek 403 döner.
+
+Node çalıştırılamayan ortamlar (paylaşımlı cPanel hosting) için aynı arayüz
+**sunucusuz** modda da çalışır; bu durumda sunucunun rolünü Firebase üstlenir
+(bkz. [§25](#25-cpanel--firebase-sunucusuz-kurulum) ve [DEPLOY.md](DEPLOY.md)).
 
 ---
 
@@ -182,8 +186,19 @@ Gider grupları (sabit/değişken/operasyonel/pazarlama) ve vergi yükü ayrıca
   (silme, bağlı cari hareketleri de kaldırır).
 * Her toptancının bağımsız **cari paneli** vardır: kesilen faturalar, yapılan ödemeler,
   toplam borç, **yürüyen bakiye**, işlem tarihleri ve fatura numaraları.
-* **Fatura borcu artırır, ödeme azaltır.** Fatura kaydında fatura numarası zorunludur;
-  KDV oranı girilir ve vergi raporunda indirilecek KDV olarak kullanılır.
+* **Fatura borcu artırır, ödeme azaltır.** Fatura kaydında fatura numarası zorunludur.
+
+**Kapsam kuralı (Faz 3.1).** Toptancı defteri **bağımsızdır**: buradaki fatura ve
+ödemeler gelir, gider, kârlılık ve vergi hesaplarına **yansımaz**. Ekran yalnızca
+restoran tedarikçileriyle olan hesabı kendi içinde takip etmeye yarar. Bu nedenle:
+
+* "Giderler" özet sayfasındaki kaynak listesinde ve kısayollarında toptancı yoktur,
+* indirilecek KDV matrahında toptancı faturaları sayılmaz,
+* Dashboard'daki *Gider KDV Toplamı* yalnızca gider faturalarından gelir,
+* Toptancılar sayfası bu kuralı ekranda da yazar (`.supplier-scope-note`).
+
+Restoran maliyetlerinin gidere girmesi isteniyorsa kayıt **Restoran → Ekstra Giderler**
+bölümüne yapılır.
 
 | # | Kriter | Test |
 | --- | --- | --- |
@@ -191,6 +206,7 @@ Gider grupları (sabit/değişken/operasyonel/pazarlama) ve vergi yükü ayrıca
 | T2 | Fatura borcu artırır | `fatura borcu artırır, ödeme azaltır; bakiye yürüyen olarak hesaplanır` |
 | T3 | Ödeme borcu azaltır | aynı test · tarayıcı: `Fatura borcu artırır, ödeme azaltır` |
 | T4 | Kalan bakiye net gösterilir | aynı testler (12.000 − 5.000 = 7.000) |
+| T8 | Defter gelir/gider ve vergiye yansımaz | tarayıcı: `Toptancı defteri gelir-gider hesabına girmediğini bildiriyor`, `Giderler alt kategorisi tüm gider kalemlerini birleştiriyor` |
 
 ### 4.3. Toptancı Arama ve Filtreleme ✅
 
@@ -1056,7 +1072,7 @@ Dashboard dokuz göstergeyi bu sırayla gösterir:
 | 2 | **Restoran Geliri** | Restoran gün sonu kayıtları (KDV dahil) |
 | 3 | **Toplam Giderler** | Tüm gider kalemleri — sigortalı maaşlar dâhil + olumsuz kur farkı |
 | 4 | **Gelir KDV'si (Otel + Restoran)** | İç yüzdeyle: otel %KDV + restoran %KDV |
-| 5 | **Gider KDV Toplamı** | Gider faturalarında (dahil − hariç) + toptancı faturalarının KDV'si |
+| 5 | **Gider KDV Toplamı** | Gider faturalarında (dahil − hariç). Toptancı defteri hariçtir (bkz. §4) |
 | 6 | **Turizm Payı** | **Yalnızca** KDV hariç otel geliri × oran |
 | 7 | **Konaklama Vergisi** | **Yalnızca** KDV hariç otel geliri × oran |
 | 8 | **Gelir Vergisi** | Aşağıdaki dört adımlı algoritma |
@@ -1089,3 +1105,102 @@ böylece sonuç mali müşavirle satır satır doğrulanabilir.
 
 > Gider KDV'sinin matrahtan düşülmesi PRD III'te belirtilen iş kuralıdır. KDV normalde
 > ayrı beyan edilen bir vergidir; canlı kullanımdan önce mali müşavirinize doğrulatın.
+
+---
+
+## 25. cPanel + Firebase (Sunucusuz Kurulum)
+
+**İstek.** "Normal bir cPanel'den çalışabilecek şekilde düzenlenecek, verileri
+Firebase'den çekip işleyecek."
+
+Paylaşımlı hostingte Node.js çalıştırılamaz. Bu yüzden uygulama ikinci bir arka uçla
+daha konuşabilir hâle getirildi: sunucunun yaptığı işi (oturum, yetki, veri) Firebase
+Authentication ve Firebase Realtime Database üstlenir. Arayüz, iş kuralları ve testler
+ortaktır; kopya kod yoktur.
+
+*Uygulama: `src/app-config.js`, `src/core/backend/firebase.js`, `src/core/api.js`,
+`database.rules.json`, `.htaccess`, [DEPLOY.md](DEPLOY.md).*
+
+### 25.1 Arka uç seçimi
+
+```
+backend: 'auto'   → sayfanın yanında /api ucu var mı? varsa Node, yoksa Firebase
+backend: 'rest'   → her zaman Node sunucusu
+backend: 'firebase' → her zaman Firebase (sunucusuz)
+```
+
+`src/core/api.js` taşıyıcıyı `setApiImplementation()` ile değiştirir; `store.js` ve tüm
+görünümler `/api/...` protokolünü kullanmaya devam eder. Böylece **aynı dosyalar** hem
+geliştirme makinesinde hem cPanel'de çalışır.
+
+### 25.2 Ortak çekirdek
+
+Davranışın iki arka uçta birebir aynı olması için şu katmanlar paylaşılır:
+
+| Dosya | Paylaşılan kural |
+| --- | --- |
+| `src/core/permissions.js` | 23 modül, `can()`, izin normalizasyonu |
+| `src/core/resources.js` | koleksiyon fabrikaları, doğrulama, sıralama, kur mührü |
+| `src/core/excelFormat.js` | XLSX sayfa/sütun biçimi ve örnek şablonlar |
+| `src/core/excelBrowser.js` | tarayıcıda XLSX yazma/okuma (zip + `DecompressionStream`) |
+| `src/core/importPlan.js` | geçerli / atlanan / çakışan / hatalı satır ayrımı |
+| `src/core/backupFormat.js` | yedek dosyası biçimi ve doğrulaması |
+
+### 25.3 Güvenlik — `database.rules.json`
+
+Tarayıcıdaki yetki kontrolü kullanıcı deneyimi içindir; **asıl koruma veritabanı
+kurallarıdır** (Node kurulumundaki 403 denetiminin karşılığı):
+
+* Oturum açmamış istek hiçbir veriyi okuyup yazamaz.
+* `active: false` hesap hiçbir şey yapamaz.
+* Her koleksiyona yazma, kullanıcının o modül iznine bağlıdır
+  (ör. `purchaseInvoices` → `giderFaturalari`).
+* Kullanıcı kayıtlarını ve ayarları yalnızca yönetici değiştirebilir; kullanıcı yalnızca
+  kendi `lastLogin` ve `mustChangePassword` alanlarını yazabilir.
+* `auditLog` **append-only**: var olan kayıt değiştirilemez/silinemez (yönetici hariç).
+* Rezervasyon düğümü Faz 3.0 ile yazmaya kapatıldı; geçmiş veri okunur.
+* İlk kurulum: hiç kullanıcı yokken giriş yapan ilk hesap kendisini yönetici olarak
+  kaydedebilir; liste doldurduktan sonra bu kapı kapanır.
+
+### 25.4 Kullanıcı adı ↔ e-posta
+
+Firebase e-posta ister, kullanıcılar kullanıcı adıyla girer. Giriş değeri `@` içermiyorsa
+`src/app-config.js` → `loginDomain` ile tamamlanır (`admin` → `admin@otel.local`).
+"Kullanıcı ve Yetki" ekranından açılan hesap hem Firebase'de hem veritabanında oluşur;
+yöneticinin oturumu düşmez. Kullanıcı silmek erişimi kapatır (`active: false`), kimlik
+kaydı Firebase Console'dan kaldırılır.
+
+### 25.5 Kabul kriterleri
+
+| # | Kriter | Test |
+| --- | --- | --- |
+| C1 | `/api` ucu yoksa uygulama Firebase moduna geçer | tarayıcı: `Statik kurulumda karşılama sayfası açılıyor` |
+| C2 | Kullanıcı adı e-postaya çevrilerek giriş yapılır | `kullanıcı adını e-postaya çevirerek giriş yapar`, tarayıcı: `Firebase hesabıyla giriş yapılıyor` |
+| C3 | Hatalı şifre Türkçe hata verir | `hatalı şifrede Türkçe hata verir` |
+| C4 | Devre dışı hesap giremez | `devre dışı hesabı içeri almaz` |
+| C5 | İlk kurulumda ilk hesap yönetici olur | `ilk girişte hiç kullanıcı yoksa yönetici olarak tanımlar` |
+| C6 | Kayıtlar Realtime Database'e yazılır ve sıralanır | `gider kaydeder, sıralar ve işlem kaydı tutar`, tarayıcı: `Gider kaydı Realtime Database'e yazılıyor` |
+| C7 | Doğrulama kuralları aynı çalışır | `geçersiz kaydı doğrulama hatasıyla reddeder` |
+| C8 | Yetkisiz modüle yazılamaz | `yetkisi olmayan modüle yazamaz` |
+| C9 | Kur mührü ve kur farkı korunur | `kuru olmayan döviz faturası tarihlerini bildirir`, tarayıcı: `Gelir faturası kur mührüyle kaydediliyor` |
+| C10 | Excel tarayıcıda okunur, mükerrerler atlanır | `Excel içe aktarımında mükerrer faturayı tekrar işlemez`, tarayıcı: `Excel içe aktarım tarayıcıda çalışıyor ve mükerrerleri atlıyor` |
+| C11 | Excel dosyaları iki yönde uyumlu | `tarayıcıda yazılan dosya sunucuda okunur`, `sunucuda yazılan dosya tarayıcıda okunur` |
+| C12 | Yedek al / denetle / geri yükle çalışır | `yedeği önce denetler, sonra geri yükler`, tarayıcı: `Yedekleme ekranı Firebase bilgisini gösteriyor` |
+| C13 | Oturum sayfa yenilemede korunur, çıkışta silinir | tarayıcı: `Sayfa yenilenince oturum korunuyor`, `Çıkış yapınca oturum temizleniyor` |
+| C14 | Veritabanı kuralları her koleksiyonu kapsar | `her koleksiyon için kural vardır ve yetki anahtarı geçerlidir` |
+| C15 | `.htaccess` modülleri doğru MIME ile sunar, sunucu kodunu gizler | `.htaccess` testleri |
+
+Tarayıcı testi gerçek Chromium'da çalışır; Firebase uçları bellek içi bir taklitle
+karşılanır, bu yüzden test gerçek projeye hiçbir şey yazmaz
+(`npm run test:browser:cpanel`).
+
+### 25.6 Firebase modunda farklılıklar
+
+* **Kur kaynağı:** TCMB/ECB uçları CORS izni vermediği için tarayıcıdan çağrılamaz;
+  bu modda Frankfurter (ECB) ve exchangerate.host denenir. İkisi de erişilemezse kur
+  **elle** girilir (Ayarlar → Döviz Kuru). Kur mührü mantığı değişmez.
+* **Yedekleme:** Sunucu klasörü ve otomatik yedek zamanlayıcısı yoktur. Ekran bu modda
+  "Anlık Yedeği İndir" ve "Dosyadan Geri Yükle" işlemlerini gösterir; Firebase Console
+  üzerinden JSON dışa aktarım da kullanılabilir.
+* **Fatura tabloları:** Sütunlar kesik dikey çizgilerle ayrılır (`.table-dividers`),
+  böylece sola yaslı metinler ile sağa yaslı tutarlar karışmaz.

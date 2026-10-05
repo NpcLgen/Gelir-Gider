@@ -835,3 +835,23 @@ table.calendar th, table.calendar td { border: none; padding: 2px; }
   .landing-features { padding: 12px 20px 40px; }
   .landing-footer-grid, .landing-copyright { padding-left: 20px; padding-right: 20px; }
 }
+
+/* ===== Fatura tablolarında sütun ayırıcı kesik çizgiler ===== */
+
+/*
+ * Tutarlar sağa, diğer alanlar sola yaslı olduğu için göz sütunları
+ * izlemekte zorlanıyordu. Sütunlar arasına boydan boya olmayan, hücre
+ * yüksekliğinde kesik dikey çizgiler konur.
+ */
+.table-dividers th:not(:last-child),
+.table-dividers td:not(:last-child) {
+  border-right: 1px dashed var(--line);
+}
+/* Son sütun (işlem düğmeleri) ve ondan önceki ayraç gereksizdir. */
+.table-dividers th:nth-last-child(2),
+.table-dividers td:nth-last-child(2) { border-right: none; }
+.table-dividers tbody tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+/* Sayısal sütunlar hizalı okunur: rakamlar aynı genişlikte. */
+.table-dividers td.num,
+.table-dividers th.num { font-variant-numeric: tabular-nums; }

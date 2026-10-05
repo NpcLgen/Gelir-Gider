@@ -167,11 +167,11 @@ function invoiceView(app, direction) {
       h('header', { class: 'card-header' },
         h('h3', {}, `${kind.title} · ${formatDate(p.from)} → ${formatDate(p.to)}`),
         h('span', { class: 'muted small' }, 'En yeni fatura üstte')),
-      h('table', {},
+      h('table', { class: 'table-dividers' },
         h('thead', {}, h('tr', {}, ...[
           kind.customerLabel, 'Fatura Tarihi', 'Fatura No', 'Tutar', 'Para Birimi',
           'Vergiler Hariç', 'Vergiler Dahil', 'Kur Farkı', '',
-        ].map((t) => h('th', {}, t)))),
+        ].map((t, i) => h('th', { class: i >= 3 && i <= 7 ? 'num' : '' }, t)))),
         h('tbody', {}, ...(rows.length
           ? rows.map((invoice) => h('tr', { class: invoice.active === false ? 'passive-row' : '' },
             h('td', {}, invoice.customer),

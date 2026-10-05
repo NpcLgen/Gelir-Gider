@@ -97,11 +97,11 @@ export function processedInvoicesView(app) {
       h('header', { class: 'card-header' },
         h('h3', {}, `İşlenen Faturalar · ${formatDate(p.from)} → ${formatDate(p.to)}`),
         h('span', { class: 'muted small' }, 'En son işlenen üstte')),
-      h('table', {},
+      h('table', { class: 'table-dividers' },
         h('thead', {}, h('tr', {}, ...[
           'İşlenme Zamanı', 'Yön', 'Müşteri', 'Fatura Tarihi', 'Fatura No',
           'Para Birimi', 'Vergiler Hariç', 'Vergiler Dahil', 'KDV', 'Durum',
-        ].map((t) => h('th', {}, t)))),
+        ].map((t, i) => h('th', { class: i >= 6 && i <= 8 ? 'num' : '' }, t)))),
         h('tbody', {}, ...(rows.length
           ? rows.map((invoice) => h('tr', { class: invoice.active === false ? 'passive-row' : '' },
             h('td', { class: 'muted small' }, batchLabel(invoice)),

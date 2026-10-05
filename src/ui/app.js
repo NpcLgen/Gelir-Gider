@@ -11,6 +11,7 @@ import { buildReport } from '../core/costEngine.js';
 import { monthPeriod, period as makePeriod, quickRange, shiftMonth } from '../core/dates.js';
 import { createPresenter } from '../core/format.js';
 import { api, setUnauthorizedHandler } from '../core/api.js';
+import { configureBackend } from '../app-config.js';
 import { createStore } from '../core/store.js';
 import { calendarView, openBulkEditor } from './calendarView.js';
 import { cashView } from './cashView.js';
@@ -84,6 +85,8 @@ function endActiveSession() {
 
 export async function mount(root) {
   endActiveSession();
+  // Node sunucusu mu, Firebase mi? (cPanel kurulumu için bkz. src/app-config.js)
+  await configureBackend();
   setUnauthorizedHandler(() => showLogin('Oturumunuz sona erdi. Lütfen tekrar giriş yapın.'));
 
   const session = await api.get('/api/auth/me').catch(() => null);

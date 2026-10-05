@@ -7,18 +7,15 @@ import { clear, errorList, field, h, toast } from './dom.js';
 
 /**
  * Dönemin vergi tabanlarını toplar.
- * Gider KDV tabanı: yalnızca belgeli (toptancı faturaları + tedarikçili giderler)
+ * Gider KDV tabanı: yalnızca belgeli (tedarikçili giderler + gider faturaları)
  * kalemler indirilecek KDV üretir; personel maaşı gibi kalemler üretmez.
+ * Toptancı cari hareketleri vergi hesabına hiç girmez.
  */
 export function taxInputs(app) {
   const state = app.store.getState();
   const report = app.report();
   const p = app.period();
   const rates = { ...defaultTaxRates(), ...(state.settings.tax ?? {}) };
-
-  const supplierInvoices = state.supplierTxns.filter((t) => t.active !== false
-    && t.type === 'invoice' && t.date >= p.from && t.date <= p.to);
-  const supplierTotal = supplierInvoices.reduce((sum, t) => sum + t.amount, 0);
 
   const month = p.from.slice(0, 7);
   const payroll = state.employees
@@ -47,7 +44,8 @@ export function taxInputs(app) {
   const salesInvoices = invoiceSummary(state.salesInvoices ?? [], { from: p.from, to: p.to, rateFor: fxRate });
   const purchaseInvoices = invoiceSummary(state.purchaseInvoices ?? [], { from: p.from, to: p.to, rateFor: fxRate });
 
-  // Belgeli giderler: tedarikçisi olan kalemler + toptancı faturaları + restoran harcamaları.
+  // Belgeli giderler: tedarikçisi olan kalemler + restoran harcamaları.
+  // Toptancı cari hareketleri hariçtir (yalnızca restoran içi borç takibi).
   const documented = report.expenses
     .filter((e) => e.vendor)
     .reduce((sum, e) => sum + e.amountBase, 0);
@@ -62,15 +60,14 @@ export function taxInputs(app) {
     invoiceRevenueKdv: salesInvoices.kdv,
     invoiceExpense: purchaseInvoices.gross,
     invoiceExpenseKdv: purchaseInvoices.kdv,
-    expensesTotal: round(report.totals.expenses + payroll + foreignPayroll + supplierTotal
+    expensesTotal: round(report.totals.expenses + payroll + foreignPayroll
       + restaurantExpenses + purchaseInvoices.gross),
     payroll: round(payroll),
     foreignPayroll: round(foreignPayroll),
     nonDeductible: foreignDeductible ? 0 : round(foreignPayroll),
-    supplierTotal: round(supplierTotal),
     restaurantExpenses: round(restaurantExpenses),
     documented: round(documented),
-    kdvBase: round(documented + supplierTotal + restaurantExpenses),
+    kdvBase: round(documented + restaurantExpenses),
   };
 }
 
@@ -125,7 +122,7 @@ export function taxView(app) {
             ? taxRow('KDV (giden faturalar)', 'Gelir faturaları (dahil − hariç)', 'faturadan', report.salesInvoiceKdv)
             : null,
           taxRow('KDV (hesaplanan toplam)', 'Konaklama + restoran + gelir faturaları', '—', report.collectedKdv, true),
-          taxRow('KDV (indirilecek)', 'Belgeli gider ve toptancı faturaları', `%${rates.kdvExpense}`, -report.deductibleKdv),
+          taxRow('KDV (indirilecek)', 'Belgeli giderler', `%${rates.kdvExpense}`, -report.deductibleKdv),
           report.purchaseInvoiceKdv > 0
             ? taxRow('— gelen faturalardan', 'Gider faturaları (dahil − hariç)', 'faturadan', -report.purchaseInvoiceKdv)
             : null,
@@ -150,7 +147,6 @@ export function taxView(app) {
         kv('— gider faturaları', formatMoney(inputs.invoiceExpense)),
         kv('— personel ve ekstra çalışan', formatMoney(inputs.payroll)),
         kv('— yabancı çalışan', formatMoney(inputs.foreignPayroll)),
-        kv('— toptancı faturaları', formatMoney(inputs.supplierTotal)),
         kv('— restoran ekstra giderleri', formatMoney(inputs.restaurantExpenses)),
         kv('KDV indirimine esas belgeli gider', formatMoney(inputs.kdvBase))),
       h('p', { class: 'muted small' },

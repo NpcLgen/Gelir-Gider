@@ -1,0 +1,178 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "data": {
+      ".read": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false",
+      ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && root.child('data/users/'+auth.uid).child('isAdmin').val() === true",
+      "users": {
+        "$uid": {
+          ".write": "auth != null && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || (auth.uid === $uid && !root.child('data/users').exists() && newData.child('isAdmin').val() === true))",
+          ".validate": "newData.hasChildren(['id','username'])",
+          "id": {
+            ".validate": "newData.val() === $uid"
+          },
+          "username": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40"
+          },
+          "isAdmin": {
+            ".validate": "newData.isBoolean()"
+          },
+          "active": {
+            ".validate": "newData.isBoolean()"
+          },
+          "lastLogin": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isString()"
+          },
+          "mustChangePassword": {
+            ".write": "auth != null && auth.uid === $uid && newData.val() === false",
+            ".validate": "newData.isBoolean()"
+          },
+          "permissions": {
+            "$module": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        }
+      },
+      "settings": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/ayarlar').val() === true)"
+      },
+      "prices": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/fiyatGirisi').val() === true)",
+        "$roomId": {
+          "$date": {
+            ".validate": "$date.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+          }
+        }
+      },
+      "rooms": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/odalar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "expenses": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/genelHarcamalar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "employees": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/calisanlar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "extraWorkers": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/ekstraCalisan').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "suppliers": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/toptancilar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "supplierTxns": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/toptancilar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "restaurantIncomes": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/restoranGelir').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "restaurantExpenses": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/restoranGider').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "foreignWorkers": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/yabanciCalisanlar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "purchaseInvoices": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/giderFaturalari').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "salesInvoices": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/gelirler').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "exchangeRates": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/ayarlar').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "cashDays": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || root.child('data/users/'+auth.uid).child('permissions/kasa').val() === true)",
+        "$id": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": {
+            ".validate": "newData.val() === $id"
+          }
+        }
+      },
+      "reservations": {
+        ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && root.child('data/users/'+auth.uid).child('isAdmin').val() === true"
+      },
+      "auditLog": {
+        "$id": {
+          ".write": "auth != null && root.child('data/users/'+auth.uid).child('active').val() !== false && (root.child('data/users/'+auth.uid).child('isAdmin').val() === true || !data.exists())",
+          ".validate": "newData.hasChildren(['at','username'])"
+        }
+      }
+    }
+  }
+}

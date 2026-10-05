@@ -47,12 +47,8 @@ export function dashboardView(app) {
   const purchaseInvoices = app.can('giderFaturalari')
     ? invoiceSummary(state.purchaseInvoices, { from: p.from, to: p.to, rateFor: (d) => rateFor(settings.fx, d) })
     : { gross: 0, kdv: 0, count: 0 };
-  const supplierVat = app.can('toptancilar')
-    ? round2(state.supplierTxns
-      .filter((t) => t.active !== false && t.type === 'invoice' && t.date >= p.from && t.date <= p.to)
-      .reduce((sum, t) => sum + (t.amount * (t.kdvRate ?? 0)) / (100 + (t.kdvRate ?? 0)), 0))
-    : 0;
-  const expenseVat = round2(purchaseInvoices.kdv + supplierVat);
+  // Toptancı cari hareketleri gider KDV'sine girmez (restoran içi borç takibidir).
+  const expenseVat = round2(purchaseInvoices.kdv);
 
   /* ---------------- Kur farkı ---------------------- */
   const fxDiff = periodExchangeDifference({

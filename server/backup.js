@@ -14,38 +14,23 @@ import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promi
 import { join } from 'node:path';
 
 import { DATA_DIR, emptyDb, load, resetForTests, SCHEMA_VERSION, update } from './db.js';
+import { BACKUP_COLLECTIONS as COLLECTIONS, snapshotOf, validateBackup as checkBackup } from '../src/core/backupFormat.js';
 
 export const BACKUP_DIR = process.env.BACKUP_DIR || join(DATA_DIR, 'backups');
 
 const stamp = (date = new Date()) => date.toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const isBackupName = (name) => /^otel-yedek-.*\.json$/.test(name);
 
-/** Yedeklenen koleksiyonlar. Kullanıcılar da dâhildir (şifreler hash'li saklanır). */
-const COLLECTIONS = [
-  'users', 'rooms', 'reservations', 'expenses', 'prices', 'settings',
-  'employees', 'extraWorkers', 'suppliers', 'supplierTxns', 'cashDays',
-  'restaurantIncomes', 'restaurantExpenses', 'foreignWorkers',
-  'purchaseInvoices', 'salesInvoices', 'auditLog',
-];
-
-export function snapshot(db) {
-  const data = {};
-  for (const key of COLLECTIONS) data[key] = db[key];
-  return {
-    format: 'otel-finans-yedek',
-    version: SCHEMA_VERSION,
-    createdAt: new Date().toISOString(),
-    counts: Object.fromEntries(COLLECTIONS.map((k) => [k, Array.isArray(db[k]) ? db[k].length : 1])),
-    data,
-  };
+/** Yedek biçimi `src/core/backupFormat.js` içinde tanımlıdır (iki arka uçta ortak). */
+export function snapshot(db, createdBy = 'sistem') {
+  return snapshotOf(db, { version: SCHEMA_VERSION, createdBy });
 }
 
 /** Yedek dosyası oluşturur. */
 export async function createBackup({ reason = 'manuel', user = null } = {}) {
   const db = await load();
-  const payload = snapshot(db);
+  const payload = snapshot(db, user?.username ?? 'sistem');
   payload.reason = reason;
-  payload.createdBy = user?.username ?? 'sistem';
 
   await mkdir(BACKUP_DIR, { recursive: true });
   const name = `otel-yedek-${stamp()}-${reason}.json`;
@@ -82,23 +67,7 @@ export async function deleteBackup(name) {
 }
 
 /** Yedek içeriğini doğrular. */
-export function validateBackup(payload) {
-  const errors = [];
-  if (payload?.format !== 'otel-finans-yedek') errors.push('Bu dosya bir sistem yedeği değil.');
-  if (!payload?.data || typeof payload.data !== 'object') errors.push('Yedek içeriği okunamadı.');
-  else {
-    for (const key of ['rooms', 'expenses', 'settings']) {
-      if (payload.data[key] === undefined) errors.push(`Yedekte "${key}" bölümü eksik.`);
-    }
-    if (Array.isArray(payload.data.users) && payload.data.users.length === 0) {
-      errors.push('Yedekte hiç kullanıcı yok; geri yüklenirse sisteme giriş yapılamaz.');
-    }
-  }
-  if (payload?.version > SCHEMA_VERSION) {
-    errors.push(`Yedek daha yeni bir sürümden (${payload.version}); önce uygulamayı güncelleyin.`);
-  }
-  return errors;
-}
+export const validateBackup = (payload) => checkBackup(payload, SCHEMA_VERSION);
 
 /**
  * Yedekten geri yükler. Geri yüklemeden önce mevcut durumun güvenlik yedeği alınır.
