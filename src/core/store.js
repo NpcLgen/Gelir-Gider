@@ -18,7 +18,7 @@ const emptyState = () => ({
   settings: { ...defaultSettings(), tax: defaultTaxRates(), bills: [] },
   employees: [], extraWorkers: [], suppliers: [], supplierTxns: [], cashDays: [],
   restaurantIncomes: [], restaurantExpenses: [], foreignWorkers: [],
-  purchaseInvoices: [], salesInvoices: [],
+  purchaseInvoices: [], salesInvoices: [], exchangeRates: [],
   users: [], auditLog: [], modules: [], me: null,
 });
 
@@ -105,6 +105,11 @@ export async function createStore() {
     deletePurchaseInvoice: (id) => mutate(() => api.del(`/api/purchaseInvoices/${id}`)),
     saveSalesInvoice: (patch) => mutate(() => api.post('/api/salesInvoices', patch)),
     deleteSalesInvoice: (id) => mutate(() => api.del(`/api/salesInvoices/${id}`)),
+
+    /* --- Döviz kuru defteri --- */
+    saveExchangeRate: (patch) => mutate(() => api.post('/api/exchangeRates', patch)),
+    deleteExchangeRate: (id) => mutate(() => api.del(`/api/exchangeRates/${id}`)),
+    missingRateDates: (currency = 'EUR') => api.get('/api/fx/missing', { currency }),
 
     /* --- Kasa --- */
     saveCashDay: (patch) => mutate(() => api.post('/api/cashDays', patch)),

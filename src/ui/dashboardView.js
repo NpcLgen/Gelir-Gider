@@ -8,6 +8,7 @@ import { EXPENSE_GROUPS, UTILITY_KINDS, UTILITY_LABELS } from '../core/catalog.j
 import { compareReports, grossUpForCommission, priceVerdict } from '../core/costEngine.js';
 import { defaultTaxRates, invoiceSummary, restaurantIncomeSummary } from '../core/finance.js';
 import { rateFor } from '../core/fx.js';
+import { periodExchangeDifference } from '../core/rates.js';
 import { previousYear } from '../core/dates.js';
 import { categoryOf, roomLabel } from '../core/model.js';
 import { formatDecimal, formatNumber, formatPercent } from '../core/format.js';
@@ -41,14 +42,23 @@ export function dashboardView(app) {
     ? invoiceSummary(state.purchaseInvoices, { from: p.from, to: p.to, rateFor: fxRate })
     : { gross: 0, count: 0 };
 
+  // Kur farkı (PRD §19): kesilen fatura TL'si ile kurdan hesaplanan tutar arasındaki fark.
+  const fxDiff = periodExchangeDifference({
+    reservations: app.can('rezervasyonlar') ? state.reservations : [],
+    salesInvoices: app.can('gelirler') ? state.salesInvoices : [],
+    purchaseInvoices: app.can('giderFaturalari') ? state.purchaseInvoices : [],
+    from: p.from, to: p.to,
+  });
+
   const revenueParts = [
     ['Oda', totals.revenue],
     ['restoran', restaurant.gross],
     ['fatura', salesInvoices.gross],
+    ['kur farkı', fxDiff.gain],
   ].filter(([, value]) => value > 0);
 
-  const combinedRevenue = Math.round((totals.revenue + restaurant.gross + salesInvoices.gross) * 100) / 100;
-  const combinedExpenses = Math.round((totals.expenses + restaurantExpenses + purchaseInvoices.gross) * 100) / 100;
+  const combinedRevenue = Math.round((totals.revenue + restaurant.gross + salesInvoices.gross + fxDiff.gain) * 100) / 100;
+  const combinedExpenses = Math.round((totals.expenses + restaurantExpenses + purchaseInvoices.gross + fxDiff.loss) * 100) / 100;
   const combinedProfit = Math.round((combinedRevenue - combinedExpenses) * 100) / 100;
 
   const marginTone = totals.targetMet ? 'good' : 'bad';
@@ -82,6 +92,13 @@ export function dashboardView(app) {
     purchaseInvoices.gross > 0
       ? kpi('Gider Faturaları', present.money(purchaseInvoices.gross),
         `${purchaseInvoices.count} gelen fatura · KDV ${present.money(purchaseInvoices.kdv)}`, 'bad')
+      : null,
+    fxDiff.invoicedCount > 0 || fxDiff.pendingCount > 0
+      ? kpi('Kur Farkı',
+        `${fxDiff.net >= 0 ? '+' : '−'}${present.money(Math.abs(fxDiff.net))}`,
+        `Olumlu ${present.money(fxDiff.gain)} · olumsuz ${present.money(fxDiff.loss)}`
+        + (fxDiff.pendingCount ? ` · ${fxDiff.pendingCount} fatura bekliyor` : ''),
+        fxDiff.net >= 0 ? 'good' : 'bad')
       : null);
 
   return h('div', { class: 'stack' },
@@ -90,6 +107,7 @@ export function dashboardView(app) {
       h('p', { class: 'muted' }, `${report.period.from} → ${report.period.to} · tutarlar ${present.currency} cinsinden`)),
     kpis,
     h('div', { class: 'split-2' }, expenseBreakdown(report, present), breakEvenCard(report, present, totals)),
+    fxDiff.rows.length ? exchangeDifferenceCard(fxDiff, present) : null,
     pricingTable(app, report, present),
     yoyCard(app, report, present),
     profitabilityTable(app, report, present),
@@ -101,6 +119,37 @@ export function dashboardView(app) {
 const methodLabel = (key) => ({
   equal: 'A · Eşit', area: 'B · Metrekare bazlı', coefficient: 'C · Özel katsayı',
 }[key] ?? key);
+
+/** Kur farkı dökümü: hangi kayıt ne kadar fark üretti? */
+function exchangeDifferenceCard(fxDiff, present) {
+  const rows = fxDiff.rows.slice(0, 12);
+  return h('section', { class: 'card table-card stack', dataset: { print: 'kurfarki' } },
+    h('header', { class: 'card-header' },
+      h('h3', {}, 'Kur Farkı Dökümü'),
+      h('span', { class: 'muted small' },
+        `Olumlu ${present.money(fxDiff.gain)} · Olumsuz ${present.money(fxDiff.loss)} · Net ${present.money(fxDiff.net)}`)),
+    h('table', {},
+      h('thead', {}, h('tr', {}, ...['Tarih', 'Kayıt', 'Açıklama', 'Sistem (TL)', 'Fatura (TL)', 'Kur Farkı']
+        .map((t) => h('th', {}, t)))),
+      h('tbody', {}, ...rows.map((row) => {
+        const effective = row.difference * (row.sign ?? 1);
+        return h('tr', {},
+          h('td', {}, row.date),
+          h('td', { class: 'muted small' }, row.kind),
+          h('td', {}, row.record.guestName ?? row.record.customer ?? '—'),
+          h('td', { class: 'num' }, present.raw ? present.raw(row.systemTry, 'TRY') : String(row.systemTry)),
+          h('td', { class: 'num' }, row.pending
+            ? h('span', { class: 'muted small' }, 'bekliyor')
+            : (present.raw ? present.raw(row.invoicedTry, 'TRY') : String(row.invoicedTry))),
+          h('td', { class: 'num' }, row.pending
+            ? h('span', { class: 'muted' }, '—')
+            : h('strong', { class: effective >= 0 ? 'good' : 'bad' },
+              `${effective >= 0 ? '+' : '−'}${present.raw ? present.raw(Math.abs(effective), 'TRY') : Math.abs(effective)}`)));
+      }))),
+    h('p', { class: 'muted small' },
+      'Olumlu kur farkı kârlılığa gelir, olumsuz kur farkı gider olarak yansır. '
+      + 'Gider faturalarında yön terstir: fazla ödenen tutar gider sayılır.'));
+}
 
 function kpi(label, value, hint, tone) {
   return h('div', { class: 'card kpi' },

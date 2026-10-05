@@ -8,6 +8,7 @@ import { categoryOf, roomLabel } from '../core/model.js';
 import { formatDate, formatDecimal, formatNumber, formatPercent } from '../core/format.js';
 import { h, toast } from './dom.js';
 import { exportCsv, exportExcel, printReport } from './export.js';
+import { periodExchangeDifference } from '../core/rates.js';
 
 export function reportsView(app) {
   const report = app.report();
@@ -15,6 +16,15 @@ export function reportsView(app) {
   const settings = app.store.getState().settings;
   const p = app.period();
   const stamp = `${p.from}_${p.to}`;
+  const state = app.store.getState();
+
+  // Kur farkı (PRD §19): kesilen fatura TL'si ile kurdan hesaplanan tutarın farkı.
+  const fxDiff = periodExchangeDifference({
+    reservations: app.can('rezervasyonlar') ? state.reservations : [],
+    salesInvoices: app.can('gelirler') ? state.salesInvoices : [],
+    purchaseInvoices: app.can('giderFaturalari') ? state.purchaseInvoices : [],
+    from: p.from, to: p.to,
+  });
 
   const summaryRows = () => [
     ['Metrik', `Değer (${present.currency})`],
@@ -24,7 +34,11 @@ export function reportsView(app) {
     ['Net Gelir', present.toDisplay(report.totals.netRevenue).toFixed(2)],
     ['Odalara Dağıtılan Gider', present.toDisplay(report.totals.totalCost).toFixed(2)],
     ['İşletme Geneli Gider', present.toDisplay(report.totals.generalExpenses).toFixed(2)],
+    ['Olumlu Kur Farkı (Gelir)', present.toDisplay(fxDiff.gain).toFixed(2)],
+    ['Olumsuz Kur Farkı (Gider)', present.toDisplay(fxDiff.loss).toFixed(2)],
+    ['Net Kur Farkı', present.toDisplay(fxDiff.net).toFixed(2)],
     ['Net Kâr', present.toDisplay(report.totals.netProfit).toFixed(2)],
+    ['Net Kâr (kur farkı dâhil)', present.toDisplay(report.totals.netProfit + fxDiff.net).toFixed(2)],
     ['Kâr Marjı', formatPercent(report.totals.margin)],
     ['Doluluk', formatPercent(report.totals.occupancyRate)],
     ['ADR', present.toDisplay(report.totals.adr).toFixed(2)],
@@ -32,6 +46,19 @@ export function reportsView(app) {
     ['Kişi Başı Maliyet', present.toDisplay(report.totals.costPerGuestNight).toFixed(2)],
     ['Zayi / Amortisman', present.toDisplay(report.totals.writeOff).toFixed(2)],
     ['Başa Baş Doluluk', report.breakEven.requiredOccupancy == null ? '—' : formatPercent(report.breakEven.requiredOccupancy)],
+  ];
+
+  /** Kur farkı dökümü (CSV/Excel çıktısına da girer). */
+  const fxRows = () => [
+    ['Tarih', 'Kayıt Türü', 'Açıklama', 'Döviz Tutarı', 'Kur', 'Sistem TL', 'Fatura TL', 'Kur Farkı'],
+    ...fxDiff.rows.map((row) => [
+      row.date, row.kind, row.record.guestName ?? row.record.customer ?? '',
+      `${row.record.totalAmount ?? row.record.grossAmount ?? 0} ${row.record.currency}`,
+      formatDecimal(row.record.fxRate ?? 0),
+      row.systemTry.toFixed(2),
+      row.pending ? '' : row.invoicedTry.toFixed(2),
+      row.pending ? 'fatura bekliyor' : (row.difference * (row.sign ?? 1)).toFixed(2),
+    ]),
   ];
 
   const roomRows = () => [
@@ -65,13 +92,15 @@ export function reportsView(app) {
 
   const exportAll = (kind) => {
     if (kind === 'csv') {
-      exportCsv(`gelir-gider-${stamp}.csv`, [...summaryRows(), [], ...roomRows(), [], ...expenseRows()]);
+      exportCsv(`gelir-gider-${stamp}.csv`,
+        [...summaryRows(), [], ...roomRows(), [], ...expenseRows(), [], ...fxRows()]);
       toast('CSV indirildi.');
     } else if (kind === 'excel') {
       exportExcel(`gelir-gider-${stamp}.xls`, [
         { title: `Dönem Özeti (${p.from} → ${p.to})`, rows: summaryRows() },
         { title: 'Oda Bazlı Kârlılık', rows: roomRows() },
         { title: 'Gider Dökümü', rows: expenseRows() },
+        { title: 'Kur Farkı Dökümü', rows: fxRows() },
       ]);
       toast('Excel dosyası indirildi.');
     } else {
@@ -109,6 +138,17 @@ export function reportsView(app) {
     h('section', { class: 'card table-card' },
       h('header', { class: 'card-header' }, h('h3', {}, 'Oda Bazlı Kârlılık')),
       table(roomRows())),
+
+    fxDiff.rows.length
+      ? h('section', { class: 'card table-card', dataset: { print: 'kurfarki' } },
+        h('header', { class: 'card-header' },
+          h('h3', {}, 'Kur Farkı Dökümü'),
+          h('span', { class: 'muted small' },
+            `Olumlu ${present.money(fxDiff.gain)} · Olumsuz ${present.money(fxDiff.loss)}`
+            + ` · Net ${present.money(fxDiff.net)}`
+            + (fxDiff.pendingCount ? ` · ${fxDiff.pendingCount} kayıt fatura bekliyor` : ''))),
+        table(fxRows()))
+      : null,
 
     h('section', { class: 'card table-card' },
       h('header', { class: 'card-header' }, h('h3', {}, 'Gider Dökümü'),

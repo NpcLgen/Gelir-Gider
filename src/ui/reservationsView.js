@@ -3,8 +3,10 @@
 import { reservationGuestNights, reservationNights, roomLabel } from '../core/model.js';
 import { priceVerdict, tariffLinesFor } from '../core/costEngine.js';
 import { CURRENCIES } from '../core/catalog.js';
-import { formatDate, formatMoney } from '../core/format.js';
+import { formatDate, formatDecimal, formatMoney } from '../core/format.js';
 import { clear, confirmDialog, errorList, field, h, openModal, select, toast } from './dom.js';
+import { dualAmount, fxSection } from './fxFields.js';
+import { exchangeDifference, isInvoiced } from '../core/rates.js';
 
 const CHANNELS = [
   { value: 'direct', label: 'Direkt' },
@@ -28,7 +30,13 @@ export function reservationsView(app) {
       h('td', {}, `${formatDate(res.checkIn)} → ${formatDate(res.checkOut)}`),
       h('td', { class: 'num' }, nights),
       h('td', { class: 'num' }, reservationGuestNights(res)),
-      h('td', { class: 'num' }, formatMoney(res.totalAmount, res.currency)),
+      h('td', { class: 'num' },
+        h('strong', {}, formatMoney(res.totalAmount, res.currency)),
+        res.currency !== 'TRY' && res.fxRate > 0
+          ? h('div', { class: 'muted micro fx-dual' },
+            `${formatMoney(res.totalAmount * res.fxRate, 'TRY')} · kur ${formatDecimal(res.fxRate)}`)
+          : null),
+      h('td', { class: 'num' }, differenceCell(res)),
       h('td', { class: 'num', title: 'Acenta komisyonu' }, res.commissionRate ? `%${res.commissionRate}` : '—'),
       h('td', { class: 'num', title: 'Dönem içi kişi başı sarfiyat (tarife)' }, formatMoney(tariffTotal)),
       h('td', {}, res.breakfastIncluded ? '☕ Dahil' : '—'),
@@ -51,8 +59,18 @@ export function reservationsView(app) {
     h('div', { class: 'card table-card' },
       h('table', {},
         h('thead', {}, h('tr', {},
-          ...['Oda', 'Misafir', 'Kişi', 'Tarih', 'Gece', 'Kişi-Gece', 'Tutar', 'Kom.', 'Sarfiyat', 'Kahvaltı', ''].map((t) => h('th', {}, t)))),
-        h('tbody', {}, ...(rows.length ? rows : [h('tr', {}, h('td', { colspan: '11', class: 'empty' }, 'Kayıt yok.'))])))));
+          ...['Oda', 'Misafir', 'Kişi', 'Tarih', 'Gece', 'Kişi-Gece', 'Tutar (döviz / TL)', 'Kur Farkı', 'Kom.', 'Sarfiyat', 'Kahvaltı', ''].map((t) => h('th', {}, t)))),
+        h('tbody', {}, ...(rows.length ? rows : [h('tr', {}, h('td', { colspan: '12', class: 'empty' }, 'Kayıt yok.'))])))));
+}
+
+/** Kur farkı hücresi: fatura tutarı girilmemişse "bekliyor" gösterilir. */
+function differenceCell(res) {
+  if (res.currency === 'TRY') return h('span', { class: 'muted' }, '—');
+  if (!isInvoiced(res)) return h('span', { class: 'muted small' }, 'fatura bekliyor');
+  const difference = exchangeDifference(res, res.totalAmount);
+  if (difference === 0) return h('span', { class: 'muted' }, '0,00 ₺');
+  return h('strong', { class: difference > 0 ? 'good' : 'bad', title: `Fatura ${formatMoney(res.invoicedAmountTry)}` },
+    `${difference > 0 ? '+' : '−'}${formatMoney(Math.abs(difference))}`);
 }
 
 export function openReservationForm(app, source) {
@@ -71,6 +89,12 @@ export function openReservationForm(app, source) {
     breakfastIncluded: source?.breakfastIncluded !== false,
     status: source?.status || 'confirmed',
     notes: source?.notes || '',
+    fxRate: source?.fxRate ?? 0,
+    fxRateDate: source?.fxRateDate ?? '',
+    fxSource: source?.fxSource ?? '',
+    invoicedAmountTry: source?.invoicedAmountTry ?? 0,
+    /** Kullanıcı kuru elle değiştirdiyse defterdeki kur üzerine yazılmaz. */
+    fxRateManual: Boolean(source?.fxRate) && source?.fxSource === 'Manuel giriş',
   };
 
   openModal({
@@ -81,6 +105,13 @@ export function openReservationForm(app, source) {
       const guestsBox = h('div', {});
       const rateBox = h('div', {});
       let commissionInput;
+
+      // Kur mührü ve kur farkı bölümü (PRD §19).
+      const fx = fxSection(app, draft, {
+        dateOf: () => draft.checkIn,
+        amountOf: () => draft.totalAmount,
+      });
+      const refreshFx = () => { fx.render(); renderRateCheck(); };
 
       const present = app.present();
 
@@ -93,7 +124,8 @@ export function openReservationForm(app, source) {
           : 0;
         if (!row?.pricing || nights <= 0 || !(draft.totalAmount > 0)) return;
 
-        const base = draft.currency === 'EUR' ? draft.totalAmount * present.rate : draft.totalAmount;
+        const sealed = Number(draft.fxRate) || present.rate;
+        const base = draft.currency === 'EUR' ? draft.totalAmount * sealed : draft.totalAmount;
         const net = base * (1 - (draft.commissionRate || 0) / 100);
         const perNight = net / nights;
         const verdict = priceVerdict(perNight, row.pricing);
@@ -133,13 +165,13 @@ export function openReservationForm(app, source) {
         })),
         guestsBox,
         h('div', { class: 'grid-2' },
-          field('Giriş *', h('input', { type: 'date', value: draft.checkIn, onInput: (e) => { draft.checkIn = e.target.value; renderRateCheck(); } })),
+          field('Giriş *', h('input', { type: 'date', value: draft.checkIn, onInput: (e) => { draft.checkIn = e.target.value; refreshFx(); } })),
           field('Çıkış *', h('input', { type: 'date', value: draft.checkOut, onInput: (e) => { draft.checkOut = e.target.value; renderRateCheck(); } })),
           field('Toplam Tutar', h('input', {
             type: 'number', min: '0', step: 'any', value: draft.totalAmount,
-            onInput: (e) => { draft.totalAmount = Number(e.target.value); renderRateCheck(); },
+            onInput: (e) => { draft.totalAmount = Number(e.target.value); refreshFx(); },
           })),
-          field('Para Birimi', select({ class: 'res-currency', onChange: (e) => { draft.currency = e.target.value; renderRateCheck(); } },
+          field('Para Birimi', select({ class: 'res-currency', onChange: (e) => { draft.currency = e.target.value; draft.fxRateManual = false; refreshFx(); } },
             CURRENCIES.map((c) => ({ value: c.key, label: `${c.symbol} ${c.key}` })), draft.currency)),
           field('Kanal', select({
             onChange: (e) => {
@@ -154,6 +186,7 @@ export function openReservationForm(app, source) {
             type: 'number', min: '0', max: '100', step: 'any', value: draft.commissionRate,
             onInput: (e) => { draft.commissionRate = Number(e.target.value); renderRateCheck(); },
           })), 'Net gelirden düşülür (PRD §2.2 Pazarlama & Komisyon).')),
+        fx.box,
         rateBox,
         h('label', { class: 'check-inline' },
           h('input', { type: 'checkbox', checked: draft.breakfastIncluded, onChange: (e) => { draft.breakfastIncluded = e.target.checked; } }),

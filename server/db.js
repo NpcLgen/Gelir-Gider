@@ -14,7 +14,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 export const DATA_DIR = process.env.DATA_DIR || join(root, 'data');
 const DB_PATH = join(DATA_DIR, 'db.json');
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Boş veritabanı iskeleti. */
 export function emptyDb() {
@@ -46,6 +46,8 @@ export function emptyDb() {
     purchaseInvoices: [],
     /** Giden e-faturalar → gelir faturaları. */
     salesInvoices: [],
+    /** Tarihsel döviz kuru defteri: { date, currency, rate, kind, source }. */
+    exchangeRates: [],
     /** PRD §8 — kritik değişikliklerin kullanıcı ve tarih kaydı. */
     auditLog: [],
   };

@@ -7,6 +7,10 @@
  */
 
 import { createInvoice, validateInvoice } from '../src/core/finance.js';
+import {
+  amountInTry, createExchangeRate, isInvoiced, missingRateDates, rateOn,
+  resolveRate, sealRate, validateExchangeRate,
+} from '../src/core/rates.js';
 import { createCashDay, createEmployee, createExtraWorker, createForeignWorker,
   createRestaurantExpense, createRestaurantIncome, createSupplier, createSupplierTxn,
   defaultTaxRates, validateCashDay, validateEmployee, validateExtraWorker, validateForeignWorker,
@@ -68,6 +72,7 @@ function visibleState(db, user) {
     foreignWorkers: mask('yabanciCalisanlar', db.foreignWorkers, ['name', 'note']),
     purchaseInvoices: mask('giderFaturalari', db.purchaseInvoices, ['customer', 'invoiceNo', 'note']),
     salesInvoices: mask('gelirler', db.salesInvoices, ['customer', 'invoiceNo', 'note']),
+    exchangeRates: db.exchangeRates ?? [],
     users: user.isAdmin ? db.users.map(publicUser) : [],
     auditLog: user.isAdmin ? db.auditLog.slice(-300).reverse() : [],
     modules: MODULES,
@@ -76,6 +81,24 @@ function visibleState(db, user) {
 }
 
 /* -------------------------------------------------------- kaynak tanımı -- */
+
+/**
+ * Döviz kaydını işlem gününün kuruyla mühürler.
+ * Kullanıcı kuru elle verdiyse (fxRate) ona dokunulmaz; böylece "o günün kuru
+ * yoksa kullanıcıdan iste" akışı çalışır.
+ */
+function applySeal(item, db, date) {
+  if (!item || item.currency === 'TRY' || !item.currency) return item;
+  if (Number(item.fxRate) > 0) return item;
+  const sealed = sealRate(db.exchangeRates ?? [], {
+    date,
+    currency: item.currency,
+    // Hiç kur kaydı yoksa ayarlardaki güncel kur son çare olarak kullanılmaz:
+    // kullanıcıdan o günün kuru istenir (doğrulama hata verir).
+    fallbackRate: 0,
+  });
+  return { ...item, ...sealed };
+}
 
 /**
  * Her koleksiyon: izin anahtarı, fabrika, doğrulayıcı ve denetim özeti.
@@ -97,6 +120,7 @@ const RESOURCES = {
   },
   reservations: {
     permission: 'rezervasyonlar', factory: createReservation,
+    seal: (item, db) => applySeal(item, db, item.checkIn),
     validate: (item, db) => validateReservation(item, { rooms: db.rooms, reservations: db.reservations }),
     label: 'Rezervasyon', summary: (r) => `${r.guestName} ${r.checkIn}→${r.checkOut}`,
     sort: (a, b) => b.checkIn.localeCompare(a.checkIn),
@@ -152,6 +176,7 @@ const RESOURCES = {
   },
   purchaseInvoices: {
     permission: 'giderFaturalari',
+    seal: (item, db) => applySeal(item, db, item.date),
     factory: (patch) => createInvoice({ ...patch, direction: 'gelen' }),
     validate: (item, db) => validateInvoice(item, { invoices: db.purchaseInvoices }),
     label: 'Gider faturası', summary: (i) => `${i.invoiceNo} · ${i.customer}`,
@@ -159,10 +184,19 @@ const RESOURCES = {
   },
   salesInvoices: {
     permission: 'gelirler',
+    seal: (item, db) => applySeal(item, db, item.date),
     factory: (patch) => createInvoice({ ...patch, direction: 'giden' }),
     validate: (item, db) => validateInvoice(item, { invoices: db.salesInvoices }),
     label: 'Gelir faturası', summary: (i) => `${i.invoiceNo} · ${i.customer}`,
     sort: (a, b) => b.date.localeCompare(a.date) || a.invoiceNo.localeCompare(b.invoiceNo, 'tr'),
+  },
+  exchangeRates: {
+    permission: 'ayarlar', factory: createExchangeRate,
+    seal: null,
+    validate: (item) => validateExchangeRate(item),
+    label: 'Döviz kuru',
+    summary: (r) => `${r.date} · 1 ${r.currency} = ${r.rate} TRY (${r.source})`,
+    sort: (a, b) => b.date.localeCompare(a.date),
   },
   cashDays: {
     permission: 'kasa', factory: createCashDay,
@@ -243,13 +277,13 @@ route('GET', /^\/api\/state$/, async ({ res, user }) => {
 
 const resourceName = (path) => path.replace(/^\/api\//, '').split('/')[0];
 
-route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices)$/, async ({ req, res, user, path }) => {
+route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices|exchangeRates)$/, async ({ req, res, user, path }) => {
   const name = resourceName(path);
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
   const payload = await readJson(req);
   const saved = await update((db) => {
-    const item = spec.factory(payload);
+    const item = spec.seal ? spec.seal(spec.factory(payload), db) : spec.factory(payload);
     const errors = spec.validate(item, db);
     if (errors.length) throw invalid(errors);
     const index = db[name].findIndex((x) => x.id === item.id);
@@ -265,7 +299,7 @@ route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppl
   sendJson(res, 200, saved);
 });
 
-route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices)\/([\w-]+)$/, async ({ res, user, match }) => {
+route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices|exchangeRates)\/([\w-]+)$/, async ({ res, user, match }) => {
   const [, name, id] = match;
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -576,6 +610,8 @@ route('POST', /^\/api\/fx\/refresh$/, async ({ req, res, user }) => {
     throw new ApiError(502, err.message, { attempts: err.attempts ?? [], keptRate: db.settings?.fx?.rate ?? null });
   }
 
+  const today = new Date().toISOString().slice(0, 10);
+
   const saved = await update((current) => {
     const fx = { ...(current.settings.fx ?? {}) };
     fx.rate = result.rate;
@@ -585,15 +621,73 @@ route('POST', /^\/api\/fx\/refresh$/, async ({ req, res, user }) => {
     fx.sourceDate = result.sourceDate;
     fx.updatedAt = result.fetchedAt;
     fx.lastError = '';
-    fx.history = { ...(fx.history ?? {}), [new Date().toISOString().slice(0, 10)]: result.rate };
+    fx.history = { ...(fx.history ?? {}), [today]: result.rate };
     current.settings = { ...current.settings, fx };
+
+    // Kur defterine bugünün kaydı yazılır (varsa güncellenir).
+    const entry = createExchangeRate({
+      date: today, currency, rate: result.rate, kind: result.provider,
+      source: result.providerLabel, sourceDate: result.sourceDate, fetchedAt: result.fetchedAt,
+      enteredBy: user?.username ?? 'sistem',
+    });
+    current.exchangeRates = [
+      ...(current.exchangeRates ?? []).filter((r) => !(r.date === today && r.currency === currency)),
+      entry,
+    ].sort((a, b) => b.date.localeCompare(a.date));
+
+    // Bugünün henüz faturalanmamış döviz işlemleri yeni kurla yeniden mühürlenir.
+    const reseal = (rows, dateOf) => {
+      let count = 0;
+      for (const row of rows ?? []) {
+        if (row.currency !== currency) continue;
+        if (dateOf(row) !== today) continue;
+        if (isInvoiced(row)) continue; // faturalanmış kayıt dokunulmaz
+        row.fxRate = entry.rate;
+        row.fxRateDate = entry.date;
+        row.fxSource = entry.source;
+        count += 1;
+      }
+      return count;
+    };
+    const resealed = reseal(current.reservations, (r) => r.checkIn)
+      + reseal(current.salesInvoices, (r) => r.date)
+      + reseal(current.purchaseInvoices, (r) => r.date);
+
     record(current, {
       user, action: 'update', entity: 'fx',
-      summary: `Kur güncellendi: 1 ${currency} = ${result.rate} TRY (${result.providerLabel})`,
+      summary: `Kur güncellendi: 1 ${currency} = ${result.rate} TRY (${result.providerLabel})`
+        + ` · ${today} kur defterine yazıldı`
+        + (resealed ? ` · ${resealed} faturalanmamış işlem güncellendi` : ''),
     });
+    fx.resealed = resealed;
+    fx.rateEntry = entry;
     return fx;
   });
   sendJson(res, 200, saved);
+});
+
+/** Kuru bulunmayan işlem günleri — kullanıcıdan elle girmesi istenir. */
+route('GET', /^\/api\/fx\/missing$/, async ({ res, user, query }) => {
+  requirePermission(user, 'ayarlar');
+  const currency = query.get('currency') || 'EUR';
+  const db = await load();
+  const rates = db.exchangeRates ?? [];
+  const dates = new Map();
+  const add = (rows, dateOf) => {
+    for (const row of missingRateDates(rows ?? [], rates, { dateOf, currency })) {
+      dates.set(row.date, (dates.get(row.date) ?? 0) + row.count);
+    }
+  };
+  add(db.reservations, (r) => r.checkIn);
+  add(db.salesInvoices, (r) => r.date);
+  add(db.purchaseInvoices, (r) => r.date);
+
+  sendJson(res, 200, {
+    currency,
+    dates: [...dates.entries()]
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => b.date.localeCompare(a.date)),
+  });
 });
 
 /* --- demo verisi (ilk kurulum kolaylığı) --- */
@@ -619,6 +713,26 @@ route('POST', /^\/api\/demo$/, async ({ res, user }) => {
     db.foreignWorkers = [];
     db.purchaseInvoices = [];
     db.salesInvoices = [];
+
+    // Demo verisi tutarlı olsun diye işlem günlerine kur kaydı üretilir ve
+    // döviz rezervasyonları o günün kuruyla mühürlenir.
+    const demoRate = Number(db.settings?.fx?.rate) || 47.5;
+    const rateDates = new Set(db.reservations.filter((r) => r.currency === 'EUR').map((r) => r.checkIn));
+    for (const expense of db.expenses) if (expense.currency === 'EUR') rateDates.add(expense.date);
+    rateDates.add(new Date().toISOString().slice(0, 10));
+    db.exchangeRates = [...rateDates]
+      .filter(Boolean)
+      .map((date, index) => createExchangeRate({
+        date, currency: 'EUR',
+        // Gerçekçi görünmesi için küçük günlük dalgalanma.
+        rate: Math.round((demoRate - 1 + (index % 7) * 0.3) * 100) / 100,
+        kind: 'manual', source: 'Demo verisi', enteredBy: 'demo',
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    for (const reservation of db.reservations) {
+      Object.assign(reservation, applySeal(reservation, db, reservation.checkIn));
+    }
+
     record(db, { user, action: 'import', entity: 'demo', summary: 'Demo verisi yüklendi; finansal kayıtlar sıfırlandı (kullanıcılar korundu)' });
     return { rooms: db.rooms.length, reservations: db.reservations.length, expenses: db.expenses.length };
   });
@@ -970,6 +1084,17 @@ export function buildExportSheets(db, { from = '', to = '', user }) {
 
   if (can(user, 'gelirler')) sheets.push(invoiceSheet('Giden Faturalar', db.salesInvoices ?? []));
   if (can(user, 'giderFaturalari')) sheets.push(invoiceSheet('Gelen Faturalar', db.purchaseInvoices ?? []));
+
+  if (can(user, 'ayarlar')) {
+    sheets.push({
+      name: 'Kur Defteri',
+      rows: [
+        ['Tarih', 'Para Birimi', 'Kur Tipi', 'Kur (TL)', 'Kaynak'],
+        ...(db.exchangeRates ?? []).filter((r) => inRange(r.date))
+          .map((r) => [r.date, r.currency, r.kind, r.rate, r.source]),
+      ],
+    });
+  }
 
   if (can(user, 'kasa')) {
     sheets.push({

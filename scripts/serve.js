@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { handleApi, setAutoBackupApplier } from '../server/api.js';
 import { DEFAULT_ADMIN, ensureDefaultAdmin } from '../server/auth.js';
 import { BACKUP_DIR, startAutoBackup } from '../server/backup.js';
+import { startFxSync } from '../server/fxSync.js';
 import { load } from '../server/db.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -125,6 +126,15 @@ export async function start() {
   };
   setAutoBackupApplier(applyAutoBackup);
   applyAutoBackup((await load()).settings?.backup);
+
+  // Günlük kur çekimi: açılışta ve 12 saatte bir o günün kuru deftere yazılır.
+  startFxSync({
+    intervalHours: 12,
+    onSync: (result) => {
+      if (result?.status === 'saved') console.log(`  Kur deftere yazıldı: ${result.date} · 1 EUR = ${result.rate} ₺ (${result.source})`);
+      else if (result?.status === 'failed') console.log(`  Kur çekilemedi (${result.error}); kur Ayarlar → Döviz Kuru'ndan elle girilebilir.`);
+    },
+  });
 
   const server = createStaticServer();
   const MAX_TRIES = 20;

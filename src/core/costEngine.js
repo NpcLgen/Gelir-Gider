@@ -164,7 +164,10 @@ export function buildRoomActivity(rooms, reservations, p, settings) {
     if (inPeriod(reservation.checkIn, p)) entry.stays += 1;
 
     // Gelir, konaklama gecelerine eşit yayılır; sadece döneme düşen kısım sayılır.
-    const gross = toBase(reservation.totalAmount, reservation.currency, rateFor(fx, reservation.checkIn));
+    // Kayda mühürlenmiş kur önceliklidir: kur sonradan değişse de geçmiş gelir sabit kalır.
+    const sealed = Number(reservation.fxRate) || 0;
+    const gross = toBase(reservation.totalAmount, reservation.currency,
+      sealed > 0 ? sealed : rateFor(fx, reservation.checkIn));
     const share = totalNights > 0 ? (gross * nights) / totalNights : 0;
     entry.revenue += share;
     entry.commission += share * ((reservation.commissionRate || 0) / 100);

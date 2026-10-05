@@ -44,10 +44,11 @@ cmd /c npm start
 ## Testler
 
 ```bash
-npm test                    # 158 birim ve API testi (node:test, bağımlılıksız)
-npm run test:browser        # 95 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
+npm test                    # 187 birim ve API testi (node:test, bağımlılıksız)
+npm run test:browser        # 109 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 npm run test:browser:v2     # yalnızca PRD v2.0 akışları (restoran, kur, yedek, mobil)
 npm run test:browser:fatura # yalnızca gelen/giden fatura akışı
+npm run test:browser:kur    # yalnızca tarihsel kur ve kur farkı akışı
 ```
 
 Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`, sunucu ayakta olmalı.
@@ -137,6 +138,23 @@ eklenir. Aynı numara farklı tutarla gelirse mevcut kayıt korunur ve satır ç
 listelenir. Aynı koruma gider ve rezervasyon aktarımlarında da çalışır. "📂 Excel Kontrol Et"
 ile önce deneme yapabilirsiniz: kayıt eklenmez, hangi satırların yeni / atlanacak / çakışan /
 hatalı olduğu önceden listelenir.
+
+## Döviz kuru ve kur farkı
+
+Döviz (EUR) işlemlerinde TL karşılığı, **işlemin yapıldığı günün kuruyla** sabitlenir:
+
+* **Tarihsel kur defteri** — her günün kuru ayrı kayıt olarak saklanır
+  (`Ayarlar → Döviz Kuru → Tarihsel Kur Defteri`). Kur sunucu açılışında ve 12 saatte bir
+  otomatik çekilir; `🔄 Kuru Şimdi Güncelle` ile elle de tetiklenir.
+* **Kur mührü** — kayıt oluşturulurken o günün kuru kayda yazılır. Kur sonradan değişse
+  bile geçmiş kayıtların TL karşılığı değişmez.
+* **Çift gösterim** — tutarlar `€195,00 / ₺7.410,00` biçiminde yan yana görünür.
+* **Kur farkı** — gelir formlarındaki **"Kesilen Fatura Tutarı (TL)"** alanı ile kurdan
+  hesaplanan tutar karşılaştırılır. Fatura yüksekse *Olumlu Kur Farkı (gelir)*, düşükse
+  *Olumsuz Kur Farkı (gider)* olarak kârlılığa yansır ve Dashboard ile Finansal
+  Raporlar'da ayrı satır olarak raporlanır.
+* O güne ait kur yoksa sistem hata vermez: en yakın önceki günün kuru önerilir ve
+  kullanıcıdan o günün kurunu girmesi istenir.
 
 ## Telefon, tablet ve tarayıcı uyumu
 

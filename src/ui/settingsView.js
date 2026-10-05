@@ -11,9 +11,10 @@ import {
 } from '../core/catalog.js';
 import { defaultTaxRates } from '../core/finance.js';
 import { createTariffItem } from '../core/model.js';
-import { formatDecimal, formatMoney } from '../core/format.js';
+import { formatDate, formatDecimal, formatMoney } from '../core/format.js';
+import { createExchangeRate, rateKindLabel } from '../core/rates.js';
 import { api } from '../core/api.js';
-import { clear, errorList, field, h, openModal, select, toast } from './dom.js';
+import { clear, confirmDialog, errorList, field, h, openModal, select, toast } from './dom.js';
 
 const TABS = [
   { key: 'genel', label: 'Genel Ayarlar', icon: '⚙️' },
@@ -392,7 +393,10 @@ function fxTab(app, settings, markDirty) {
       settings.fx = { ...settings.fx, ...updated };
       rateInput.value = String(updated.rate);
       renderStatus(updated);
-      toast(`Kur güncellendi: 1 € = ${formatDecimal(updated.rate)} ₺`);
+      toast(`Kur güncellendi: 1 € = ${formatDecimal(updated.rate)} ₺ · bugünün kuru deftere yazıldı`
+        + (updated.resealed ? ` · ${updated.resealed} faturalanmamış işlem güncellendi` : ''));
+      // Sunucu kur defterine yazdıysa kart tazelenir (rateEntry yalnızca gerçek yanıtta gelir).
+      if (updated.rateEntry) app.refresh();
     } catch (err) {
       // Başarısız güncellemede mevcut kur korunur.
       settings.fx.lastError = err.message;
@@ -430,13 +434,127 @@ function fxTab(app, settings, markDirty) {
         field('1 € = ? ₺', rateInput,
           'Tutarlar girildikleri para biriminde saklanır; rapor anında bu kurla çevrilir.'))),
 
-    card('Kur Geçmişi', 'Geçmiş dönem raporları o güne ait kurla hesaplanır.',
+    rateLedgerCard(app),
+
+    card('Kur Geçmişi (ayar özeti)', 'Geçmiş dönem raporları o güne ait kurla hesaplanır.',
       historyRows.length
         ? h('table', { class: 'mini-table' },
           h('thead', {}, h('tr', {}, h('th', {}, 'Tarih'), h('th', { class: 'num' }, '1 € karşılığı'))),
           h('tbody', {}, ...historyRows.map(([date, rate]) => h('tr', {},
             h('td', {}, date), h('td', { class: 'num' }, `${formatDecimal(rate)} ₺`)))))
         : h('p', { class: 'muted small' }, 'Henüz kur geçmişi yok.')));
+}
+
+/* ------------------------------------ Tarihsel kur defteri (PRD §19) ---- */
+
+/**
+ * Kur defteri kartı: tarih bazlı kayıtlar, elle kur girme ve kuru bulunmayan
+ * işlem günlerinin listesi.
+ */
+function rateLedgerCard(app) {
+  const state = app.store.getState();
+  const rates = (state.exchangeRates ?? []).filter((r) => r.currency === 'EUR');
+  const draft = { date: new Date().toISOString().slice(0, 10), rate: '' };
+
+  const missingBox = h('div', { class: 'stack tight' });
+  const ledgerBox = h('div', {});
+
+  /** Kuru olmayan işlem günlerini sunucudan çeker. */
+  const loadMissing = async () => {
+    clear(missingBox);
+    try {
+      const result = await app.store.missingRateDates('EUR');
+      if (!result.dates.length) {
+        missingBox.appendChild(h('p', { class: 'muted small fx-missing-none' },
+          '✔ Tüm döviz işlemlerinin gününe ait kur kayıtlı.'));
+        return;
+      }
+      missingBox.appendChild(h('div', { class: 'verdict verdict-below' },
+        h('strong', {}, `💱 ${result.dates.length} işlem gününün kuru eksik`),
+        h('span', { class: 'small' }, 'Aşağıdaki günlerin kurunu girin; işlemlerin TL karşılığı buna göre hesaplanır.')));
+      missingBox.appendChild(h('table', { class: 'mini-table fx-missing-table' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Tarih'), h('th', { class: 'num' }, 'İşlem'), h('th', {}, 'Kur'))),
+        h('tbody', {}, ...result.dates.map((row) => {
+          const input = h('input', { type: 'number', min: '0', step: 'any', placeholder: 'Örn. 38,00' });
+          return h('tr', {},
+            h('td', {}, formatDate(row.date)),
+            h('td', { class: 'num' }, String(row.count)),
+            h('td', {}, h('div', { class: 'row gap center' }, input,
+              h('button', {
+                class: 'btn small primary', type: 'button',
+                onClick: async () => {
+                  const value = Number(input.value);
+                  if (!(value > 0)) { toast('Kur 0’dan büyük olmalıdır.', 'error'); return; }
+                  await app.store.saveExchangeRate(createExchangeRate({
+                    date: row.date, currency: 'EUR', rate: value, kind: 'manual', source: 'Manuel giriş',
+                  }));
+                  toast(`${formatDate(row.date)} kuru kaydedildi.`);
+                  app.refresh();
+                },
+              }, '💾 Kuru Ekle'))));
+        }))));
+    } catch (err) {
+      missingBox.appendChild(h('p', { class: 'muted small' }, `Eksik kur listesi alınamadı: ${err.message}`));
+    }
+  };
+  loadMissing();
+
+  const renderLedger = () => {
+    clear(ledgerBox);
+    if (!rates.length) {
+      ledgerBox.appendChild(h('p', { class: 'muted small' },
+        'Kur defteri boş. "Kuru Şimdi Güncelle" ile bugünün kurunu çekebilir veya aşağıdan elle girebilirsiniz.'));
+      return;
+    }
+    ledgerBox.appendChild(h('div', { class: 'table-card' },
+      h('table', { class: 'mini-table fx-ledger' },
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Tarih'), h('th', {}, 'Kur Tipi'), h('th', { class: 'num' }, '1 € = ₺'), h('th', {}, 'Kaynak'), h('th', {}, ''))),
+        h('tbody', {}, ...rates.slice(0, 60).map((rate) => h('tr', {},
+          h('td', {}, formatDate(rate.date)),
+          h('td', { class: 'muted small' }, rateKindLabel(rate.kind)),
+          h('td', { class: 'num' }, `${formatDecimal(rate.rate)} ₺`),
+          h('td', { class: 'muted small' }, rate.source),
+          h('td', {}, h('button', {
+            class: 'icon-btn', type: 'button', title: 'Sil',
+            onClick: () => confirmDialog(`${formatDate(rate.date)} kur kaydı silinsin mi?`, async () => {
+              await app.store.deleteExchangeRate(rate.id);
+              toast('Kur kaydı silindi.', 'warn');
+              app.refresh();
+            }),
+          }, '🗑️'))))))));
+  };
+  renderLedger();
+
+  return card('Tarihsel Kur Defteri',
+    'Her günün kuru ayrı kayıt olarak saklanır. İşlemler kaydedilirken o günün kuru kayda mühürlenir; '
+    + 'kur sonradan değişse bile geçmiş kayıtların TL karşılığı sabit kalır.',
+    missingBox,
+    h('div', { class: 'grid-3 fx-add-rate' },
+      field('Tarih', h('input', {
+        type: 'date', value: draft.date, class: 'fx-new-date',
+        onInput: (e) => { draft.date = e.target.value; },
+      })),
+      field('1 € = ? ₺', h('input', {
+        type: 'number', min: '0', step: 'any', class: 'fx-new-rate',
+        onInput: (e) => { draft.rate = Number(e.target.value); },
+      })),
+      h('div', { class: 'field' },
+        h('span', { class: 'field-label' }, '\u00a0'),
+        h('button', {
+          class: 'btn primary fx-add-save', type: 'button',
+          onClick: async () => {
+            if (!(Number(draft.rate) > 0)) { toast('Kur 0’dan büyük olmalıdır.', 'error'); return; }
+            try {
+              await app.store.saveExchangeRate(createExchangeRate({
+                date: draft.date, currency: 'EUR', rate: Number(draft.rate), kind: 'manual', source: 'Manuel giriş',
+              }));
+              toast(`${formatDate(draft.date)} kuru deftere eklendi.`);
+              app.refresh();
+            } catch (err) { toast(err.errors?.[0] ?? err.message, 'error'); }
+          },
+        }, '＋ Kur Ekle'))),
+    ledgerBox);
 }
 
 /* ------------------------------------------- Kullanıcı ve Güvenlik ------ */

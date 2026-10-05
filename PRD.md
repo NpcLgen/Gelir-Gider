@@ -2,7 +2,7 @@
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 2.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 158 birim/API testi (`npm test`) + 95 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 187 birim/API testi (`npm test`) + 109 adımlı tarayıcı akış testi (`npm run test:browser`).
 **Sürüm 2.0 teslim listesi:** 18/18 madde tamamlandı — bkz. [§12](#12-sürüm-20-teslim-listesi-1818).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
@@ -365,11 +365,13 @@ server/
                         yedekleme, döviz kuru
   excel.js            → bağımlılıksız XLSX okuma/yazma (node:zlib), şablonlar
   fx.js               → döviz kuru servisi (TCMB / ECB), çoklu kaynak ve yedekleme
+  fxSync.js           → günlük otomatik kur çekimi (kur defterine yazar)
   backup.js           → yedek alma, listeleme, doğrulama, geri yükleme, otomatik yedek
   audit.js            → denetim kaydı
 src/core/             → tarayıcı ve sunucunun paylaştığı saf mantık
   finance.js          → personel, toptancı cari, kasa, vergi, fatura hesapları
   costEngine.js       → maliyet dağıtımı, fiyat eşikleri (bkz. PRD-BI.md)
+  rates.js            → tarihsel kur defteri, kur mührü, kur farkı
   model.js · dates.js · fx.js · format.js · api.js · store.js
 src/ui/               → görünümler (login, dashboard, giderler/özet, toptancılar, kasa,
                         vergi, kullanıcılar, excel, yazdırma, takvim, oda kartı…)
@@ -868,3 +870,103 @@ birlikte uygulanır, böylece ne görünür ne de tıklamaları yakalar.
 | # | Kriter | Test |
 | --- | --- | --- |
 | T1 | 3 saniye sonra iz bırakmadan kaybolur | tarayıcı: `Bildirim kutusu 3 saniye sonra tamamen kayboluyor` |
+
+---
+
+## 19. Tarihsel Döviz Kuru ve Kur Farkı
+
+### 19.1. Amaç
+
+Döviz (EUR) üzerinden yapılan konaklama tahsilatlarının TL karşılığı, **işlemin
+yapıldığı günün kuruyla** kayıt altına alınır. Kesilen resmi faturanın TL tutarı ile
+kurdan hesaplanan TL tutarı arasındaki fark **kur farkı** olarak otomatik hesaplanır
+ve kârlılığa yansıtılır; böylece finansal tablolardaki muhasebesel sapma ortadan kalkar.
+
+### 19.2. Kur defteri (`exchangeRates`)
+
+Kurlar ayrı bir koleksiyonda **tarih bazında** saklanır:
+
+| Alan | Açıklama |
+| --- | --- |
+| `date` | Kurun ait olduğu gün (YYYY-AA-GG) |
+| `currency` | Para birimi (EUR) |
+| `kind` | **Kur tipi**: `tcmb` · `tcmb_buy` · `frankfurter` · `manual` |
+| `rate` | 1 birim dövizin TL karşılığı |
+| `source` · `sourceDate` · `fetchedAt` · `enteredBy` | Kaynak ve denetim bilgisi |
+
+Arayüz: `Ayarlar → Döviz Kuru → Tarihsel Kur Defteri`. Kayıtlar listelenir, elle kur
+eklenebilir ve silinebilir. Kur defteri yedeklere ve Excel dışa aktarımına dâhildir.
+
+### 19.3. Kurun otomatik ve manuel çekilmesi
+
+| Yol | Davranış |
+| --- | --- |
+| **Otomatik (cron)** | Sunucu açılışında ve 12 saatte bir (`server/fxSync.js`) o günün kuru TCMB/ECB'den çekilip deftere yazılır. Gün için kayıt varsa ağa çıkılmaz. |
+| **Manuel düğme** | `Ayarlar → Döviz Kuru → 🔄 Kuru Şimdi Güncelle` anında kaynağa bağlanır, kuru deftere yazar **ve o günün henüz faturalanmamış işlemlerini yeni kurla yeniden mühürler.** |
+| **Elle giriş** | Kur defterine tarih + değer girilerek kayıt eklenir (`kind: manual`). |
+
+Ağ erişimi yoksa sistem hata vermez: son geçerli kur korunur, kullanıcı kuru elle girebilir.
+
+### 19.4. Kur mührü (snapshot)
+
+Her döviz işlemi kaydedilirken o günün kuru **kayda mühürlenir**:
+
+```
+fxRate · fxRateDate · fxSource   →  rezervasyon, gelir faturası, gider faturası
+```
+
+* Raporlar bu mühürlenmiş kuru kullanır; güncel kur değişse bile geçmiş kayıtların
+  TL karşılığı **sabit kalır**.
+* Mühür sunucuda uygulanır (`applySeal`), böylece arayüz atlatılsa bile kayıt kursuz kalmaz.
+* Kullanıcı kuru elle verdiyse (`Kullanılan Kur` alanı) bu değer korunur.
+* Kuru bulunamayan bir döviz kaydı **reddedilir** ve kullanıcıdan o günün kuru istenir.
+
+### 19.5. Çift para birimi gösterimi
+
+Tutarlar döviz ve TL karşılığıyla birlikte gösterilir:
+
+```
+€195,00 / ₺7.410,00          (form)
+€195,00                      (liste)
+₺7.410,00 · kur 38,00
+```
+
+Rezervasyon listesi, gelir/gider fatura listeleri ve işlem formları bu biçimi kullanır.
+
+### 19.6. Kur farkı
+
+Gelir giriş ekranlarına **"Kesilen Fatura Tutarı (TL)"** alanı eklenmiştir.
+
+```
+Kur Farkı = Kesilen Fatura Tutarı (TL) − (Döviz Tutarı × Mühürlenmiş Kur)
+```
+
+| Durum | Sonuç |
+| --- | --- |
+| Fatura > sistem | **Olumlu Kur Farkı (Gelir)** → kârlılığa eklenir |
+| Fatura < sistem | **Olumsuz Kur Farkı (Gider)** → kârlılıktan düşülür |
+| Fatura tutarı girilmemiş | Kur farkı hesaplanmaz; kayıt "fatura bekliyor" olarak işaretlenir |
+| Gider faturası | Yön terstir: fazla ödenen tutar gider, eksik ödenen tutar gelir sayılır |
+
+**PRD örneği:** 1 Eylül · 195 EUR · 1 EUR = 38,00 ₺ → sistem 7.410 ₺ · fatura 7.450 ₺
+→ **+40 ₺ olumlu kur farkı**.
+
+Raporlara yansıma:
+
+* **Dashboard:** `Kur Farkı` KPI kartı (olumlu / olumsuz / bekleyen) ve `Kur Farkı Dökümü` tablosu.
+* **Finansal Raporlar:** Dönem özetinde `Olumlu Kur Farkı (Gelir)`, `Olumsuz Kur Farkı (Gider)`,
+  `Net Kur Farkı` ve `Net Kâr (kur farkı dâhil)` satırları; ayrı `Kur Farkı Dökümü` tablosu.
+* **CSV / Excel / Yazdırma:** kur farkı dökümü ayrı sayfa ve yazdırma seçeneği olarak yer alır.
+
+### 19.7. Kabul kriterleri
+
+| # | Kriter | Durum | Test |
+| --- | --- | --- | --- |
+| K1 | Geçmiş işlem bugünün değil, o günün kayıtlı kurunu kullanır | ✅ | `güncel kur değişse bile geçmiş gün kuru sabit kalır` · tarayıcı: `Kur sonradan değişse de geçmiş kaydın TL karşılığı sabit kalıyor` |
+| K2 | EUR tutarı ve TL karşılığı aynı anda görünür | ✅ | tarayıcı: `Kuru olan güne rezervasyon kuru mühürleniyor ve TL karşılığı görünüyor`, `Rezervasyon listesinde döviz ve TL tutarı yan yana görünüyor` |
+| K3 | "Kesilen Fatura Tutarı (TL)" elle girilebiliyor | ✅ | tarayıcı: `"Kesilen Fatura Tutarı (TL)" girilince kur farkı anında hesaplanıyor` |
+| K4 | Kur farkı (+/−) otomatik hesaplanıp raporlanıyor | ✅ | `PRD örneği: 195 € · 38,00 kur · 7.450 TL fatura → +40 TL olumlu kur farkı` · tarayıcı: `Kur farkı finansal raporlarda satır olarak görünüyor` |
+| K5 | Kur güncellemesi hem otomatik hem manuel çalışıyor | ✅ | `günlük kur çekimi deftere yazar` · tarayıcı: `"Kuru Şimdi Güncelle" kuru deftere yazıyor` |
+| K6 | Kur bulunamazsa hata yerine kullanıcıdan kur isteniyor | ✅ | `kuru olmayan döviz rezervasyonu kullanıcıdan kur ister` · tarayıcı: `Kuru olmayan güne döviz rezervasyonu kur ister` |
+| K7 | Kur defteri yetkisiz kullanıcıya kapalı | ✅ | `kur defteri yetkisiz kullanıcıya kapalıdır` |
+| K8 | Kuru eksik işlem günleri listelenip doldurulabiliyor | ✅ | `kuru eksik işlem günleri listelenir` · tarayıcı: `Eksik kur günleri listeleniyor ve listeden girilebiliyor` |

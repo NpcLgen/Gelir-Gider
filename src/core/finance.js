@@ -331,6 +331,12 @@ export function createInvoice(patch = {}) {
     grossAmount: gross || amount,
     note: text(patch.note),
     active: patch.active !== false,
+    /* --- Kur mührü (döviz faturalar için) --- */
+    fxRate: num(patch.fxRate, 0),
+    fxRateDate: text(patch.fxRateDate),
+    fxSource: text(patch.fxSource),
+    /** Fiilen kesilen faturanın TL tutarı; kur farkı bundan hesaplanır. */
+    invoicedAmountTry: num(patch.invoicedAmountTry, 0),
   };
 }
 
@@ -359,6 +365,7 @@ export function validateInvoice(invoice, { invoices = [], currencies = ['TRY', '
     && num(invoice.netAmount, 0) > num(invoice.grossAmount, 0) + 0.01) {
     errors.push('Vergiler hariç tutar, vergiler dahil tutardan büyük olamaz.');
   }
+  if (num(invoice.invoicedAmountTry, 0) < 0) errors.push('Kesilen fatura tutarı negatif olamaz.');
   // Aynı yönde aynı fatura no iki kez kaydedilemez (mükerrer içe aktarım koruması).
   const clash = invoices.find((i) => i.id !== invoice.id
     && text(i.invoiceNo).toLocaleUpperCase('tr') === text(invoice.invoiceNo).toLocaleUpperCase('tr'));
@@ -379,7 +386,8 @@ export function invoiceSummary(invoices, { from = '', to = '', rateFor = () => 1
   let kdv = 0;
   const byCurrency = new Map();
   for (const invoice of rows) {
-    const rate = rateFor(invoice.date);
+    // Kayda mühürlenmiş kur varsa o kullanılır; böylece geçmiş tutarlar sabit kalır.
+    const rate = num(invoice.fxRate, 0) > 0 ? invoice.fxRate : rateFor(invoice.date);
     const toTry = (value) => (invoice.currency === 'EUR' ? value * (Number(rate) || 1) : value);
     gross += toTry(invoiceAmount(invoice));
     net += toTry(num(invoice.netAmount, 0) || invoiceAmount(invoice));

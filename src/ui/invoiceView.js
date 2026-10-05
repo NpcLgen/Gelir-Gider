@@ -12,8 +12,10 @@ import { api } from '../core/api.js';
 import { CURRENCIES } from '../core/catalog.js';
 import { invoiceAmount, invoiceKdv, invoiceSummary } from '../core/finance.js';
 import { rateFor } from '../core/fx.js';
-import { formatDate, formatMoney } from '../core/format.js';
+import { formatDate, formatDecimal, formatMoney } from '../core/format.js';
 import { clear, confirmDialog, errorList, field, h, openModal, select, toast } from './dom.js';
+import { fxSection } from './fxFields.js';
+import { exchangeDifference, isInvoiced } from '../core/rates.js';
 import { importResult, importToast } from './excelView.js';
 
 /** İki sayfanın yalnızca etiket ve depo adlarıyla ayrıştığı tanım. */
@@ -168,7 +170,7 @@ function invoiceView(app, direction) {
       h('table', {},
         h('thead', {}, h('tr', {}, ...[
           kind.customerLabel, 'Fatura Tarihi', 'Fatura No', 'Tutar', 'Para Birimi',
-          'Vergiler Hariç', 'Vergiler Dahil', '',
+          'Vergiler Hariç', 'Vergiler Dahil', 'Kur Farkı', '',
         ].map((t) => h('th', {}, t)))),
         h('tbody', {}, ...(rows.length
           ? rows.map((invoice) => h('tr', { class: invoice.active === false ? 'passive-row' : '' },
@@ -180,9 +182,14 @@ function invoiceView(app, direction) {
             h('td', { class: 'num' }, formatMoney(invoice.netAmount, invoice.currency)),
             h('td', { class: 'num' },
               h('strong', {}, formatMoney(invoice.grossAmount, invoice.currency)),
+              invoice.currency !== 'TRY' && invoice.fxRate > 0
+                ? h('div', { class: 'muted micro fx-dual' },
+                  `${formatMoney(invoice.grossAmount * invoice.fxRate, 'TRY')} · kur ${formatDecimal(invoice.fxRate)}`)
+                : null,
               invoiceKdv(invoice) > 0
                 ? h('div', { class: 'muted micro' }, `KDV ${formatMoney(invoiceKdv(invoice), invoice.currency)}`)
                 : null),
+            h('td', { class: 'num' }, differenceCell(invoice)),
             h('td', {}, h('div', { class: 'row gap' },
               h('button', {
                 class: 'icon-btn', type: 'button', title: 'Düzenle',
@@ -196,9 +203,19 @@ function invoiceView(app, direction) {
                   toast('Fatura silindi.', 'warn');
                 }),
               }, '🗑️')))))
-          : [h('tr', {}, h('td', { colspan: '8', class: 'empty' }, kind.empty))])))),
+          : [h('tr', {}, h('td', { colspan: '9', class: 'empty' }, kind.empty))])))),
 
     h('p', { class: 'muted small' }, kind.note));
+}
+
+/** Kur farkı hücresi: yalnızca döviz faturalarda anlamlıdır. */
+function differenceCell(invoice) {
+  if (invoice.currency === 'TRY') return h('span', { class: 'muted' }, '—');
+  if (!isInvoiced(invoice)) return h('span', { class: 'muted small' }, 'fatura TL’si yok');
+  const difference = exchangeDifference(invoice, invoice.grossAmount);
+  if (difference === 0) return h('span', { class: 'muted' }, '0,00 ₺');
+  return h('strong', { class: difference > 0 ? 'good' : 'bad' },
+    `${difference > 0 ? '+' : '−'}${formatMoney(Math.abs(difference))}`);
 }
 
 export function openInvoiceForm(app, direction, source) {
@@ -214,6 +231,11 @@ export function openInvoiceForm(app, direction, source) {
     grossAmount: source?.grossAmount ?? 0,
     note: source?.note ?? '',
     active: source?.active !== false,
+    fxRate: source?.fxRate ?? 0,
+    fxRateDate: source?.fxRateDate ?? '',
+    fxSource: source?.fxSource ?? '',
+    invoicedAmountTry: source?.invoicedAmountTry ?? 0,
+    fxRateManual: Boolean(source?.fxRate) && source?.fxSource === 'Manuel giriş',
   };
 
   openModal({
@@ -222,6 +244,11 @@ export function openInvoiceForm(app, direction, source) {
     size: 'md',
     content: (close) => {
       const errorBox = h('div', { class: 'error-box hidden' });
+      // Döviz faturalarda kur mührü ve kur farkı (PRD §19).
+      const fx = fxSection(app, draft, {
+        dateOf: () => draft.date,
+        amountOf: () => draft.grossAmount || draft.amount,
+      });
       return h('form', { class: 'stack', onSubmit: (e) => e.preventDefault() },
         errorBox,
         field(`${kind.customerLabel} *`, h('input', {
@@ -231,7 +258,7 @@ export function openInvoiceForm(app, direction, source) {
         h('div', { class: 'grid-2' },
           field('Fatura Tarihi *', h('input', {
             type: 'date', value: draft.date, class: 'inv-date',
-            onInput: (e) => { draft.date = e.target.value; },
+            onInput: (e) => { draft.date = e.target.value; fx.render(); },
           })),
           field('Fatura No *', h('input', {
             type: 'text', value: draft.invoiceNo, class: 'inv-no',
@@ -242,7 +269,7 @@ export function openInvoiceForm(app, direction, source) {
             type: 'number', min: '0', step: 'any', value: draft.amount, class: 'inv-amount',
             onInput: (e) => { draft.amount = Number(e.target.value); },
           })),
-          field('Para Birimi', select({ class: 'inv-currency', onChange: (e) => { draft.currency = e.target.value; } },
+          field('Para Birimi', select({ class: 'inv-currency', onChange: (e) => { draft.currency = e.target.value; draft.fxRateManual = false; fx.render(); } },
             CURRENCIES.map((c) => ({ value: c.key, label: `${c.symbol} ${c.key}` })), draft.currency)),
           field('Vergiler Hariç Toplam', h('input', {
             type: 'number', min: '0', step: 'any', value: draft.netAmount, class: 'inv-net',
@@ -250,8 +277,9 @@ export function openInvoiceForm(app, direction, source) {
           }))),
         field('Vergiler Dahil Toplam *', h('input', {
           type: 'number', min: '0', step: 'any', value: draft.grossAmount, class: 'inv-gross',
-          onInput: (e) => { draft.grossAmount = Number(e.target.value); },
+          onInput: (e) => { draft.grossAmount = Number(e.target.value); fx.render(); },
         }), 'Hesaplamalarda bu tutar kullanılır; KDV = dahil − hariç.'),
+        fx.box,
         field('Açıklama', h('input', {
           type: 'text', value: draft.note, class: 'inv-note',
           onInput: (e) => { draft.note = e.target.value; },

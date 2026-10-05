@@ -160,6 +160,15 @@ export function createReservation(patch = {}) {
     breakfastIncluded: patch.breakfastIncluded !== false,
     status: patch.status === 'cancelled' ? 'cancelled' : 'confirmed',
     notes: String(patch.notes ?? ''),
+    /* --- Kur mührü: kayıt anındaki kur kayda sabitlenir --- */
+    /** 1 birim dövizin TL karşılığı (TRY kayıtlarda 0). */
+    fxRate: num(patch.fxRate, 0),
+    /** Kurun ait olduğu gün. */
+    fxRateDate: String(patch.fxRateDate ?? ''),
+    /** Kurun kaynağı (TCMB Efektif Satış, Manuel giriş…). */
+    fxSource: String(patch.fxSource ?? ''),
+    /** Fiilen kesilen resmi faturanın TL tutarı (kur farkı bundan hesaplanır). */
+    invoicedAmountTry: num(patch.invoicedAmountTry, 0),
   };
 }
 
@@ -203,6 +212,11 @@ export function validateReservation(reservation, { rooms = [], reservations = []
     errors.push(`${roomLabel(room)} odası satışta değil (${room.status}).`);
   }
   if (num(reservation.totalAmount, 0) < 0) errors.push('Konaklama tutarı negatif olamaz.');
+  if (num(reservation.invoicedAmountTry, 0) < 0) errors.push('Kesilen fatura tutarı negatif olamaz.');
+  // Döviz kaydı kur mührü olmadan saklanmaz; aksi halde TL karşılığı sonradan kayar.
+  if (reservation.currency !== 'TRY' && num(reservation.totalAmount, 0) > 0 && num(reservation.fxRate, 0) <= 0) {
+    errors.push(`${reservation.checkIn || 'İşlem'} tarihine ait ${reservation.currency} kuru bulunamadı; kuru elle giriniz.`);
+  }
 
   if (room && reservation.status !== 'cancelled' && isValidDate(reservation.checkIn) && isValidDate(reservation.checkOut)) {
     const clash = reservations.find(
