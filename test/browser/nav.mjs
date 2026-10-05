@@ -40,3 +40,19 @@ export function makeGo(page) {
 }
 
 export { rx as navLabelPattern };
+
+/**
+ * Uygulamayı açar ve giriş ekranına ulaşır.
+ *
+ * PRD III §3 ile adres köküne karşılama sayfası geldiği için testler önce
+ * "Giriş Yap" düğmesine basar.
+ */
+export async function openLogin(page, base) {
+  await page.goto(base, { waitUntil: 'load' });
+  await page.waitForSelector('.landing, .login-card, .layout', { timeout: 15000 });
+  if (await page.$('.landing')) {
+    await page.click('.landing-login-top');
+    await page.waitForSelector('.login-card', { timeout: 10000 });
+  }
+  return page.$('.login-card');
+}

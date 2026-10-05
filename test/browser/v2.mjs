@@ -10,7 +10,7 @@
  */
 
 import { chromium } from 'playwright';
-import { makeGo } from './nav.mjs';
+import { makeGo, openLogin } from './nav.mjs';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173/';
 const USER = process.env.TEST_USER || 'Admin';
@@ -57,8 +57,7 @@ const settingsTab = async (label) => {
 
 const today = new Date().toISOString().slice(0, 10);
 
-await page.goto(BASE, { waitUntil: 'load' });
-await page.waitForSelector('.login-card');
+await openLogin(page, BASE);
 
 /* --------------------------------------- §1.1 şifre göster/gizle -------- */
 
@@ -122,11 +121,9 @@ await step('§1.3 Aynı anda yalnızca bir menü kategorisi açık kalır', asyn
 /* -------------------------------------- §1.2 kategori değiştirme hatası - */
 
 await step('§1.2 Çıkış–giriş sonrası menüde gezinme çalışır', async () => {
-  await page.click('.topbar .user-chip, .topbar button:has-text("Çıkış")').catch(() => {});
-  if (!(await page.$('.login-card'))) {
-    await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }));
-    await page.reload({ waitUntil: 'load' });
-  }
+  // Gerçek çıkış akışı: hesap menüsünden "Çıkış Yap" → giriş ekranı.
+  await page.click('.account-chip');
+  await page.click('button:has-text("Çıkış Yap")');
   await page.waitForSelector('.login-card', { timeout: 15000 });
   if (await tryLogin(CHANGED) !== 'ok') throw new Error('yeniden giriş yapılamadı');
   await page.waitForSelector('.layout');
@@ -205,9 +202,12 @@ await step('§2.3 Üçüncü gün sonu kaydı reddedilir', async () => {
 await step('§2.1 Restoran geliri genel gelire ekleniyor', async () => {
   await go('Dashboard');
   await page.waitForSelector('.kpi-grid');
-  const kpi = await page.textContent('.kpi:has-text("Toplam Gelir")');
-  if (!kpi.includes('restoran')) throw new Error(`restoran geliri dahil değil: ${kpi.replace(/\s+/g, ' ')}`);
-  console.log(`   ${kpi.replace(/\s+/g, ' ').trim().slice(0, 120)}`);
+  // PRD III §4 — restoran geliri kendi kartında ve gelir vergisi hesabında yer alır.
+  const kpi = (await page.textContent('.kpi:has-text("Restoran Geliri")')).replace(/\s+/g, ' ');
+  if (!/21\.250/.test(kpi)) throw new Error(`restoran geliri kartta yok: ${kpi}`);
+  const formul = (await page.textContent('.card:has-text("Gelir Vergisi Hesabı")')).replace(/\s+/g, ' ');
+  if (!formul.includes('Restoran geliri')) throw new Error('restoran geliri toplam gelire girmiyor');
+  console.log(`   ${kpi.trim().slice(0, 120)}`);
 });
 
 /* --------------------------------------------- §2.2 restoran KDV %10 --- */

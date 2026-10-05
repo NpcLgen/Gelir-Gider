@@ -7,11 +7,12 @@
   "scripts": {
     "start": "node scripts/serve.js",
     "test": "node --test test/*.test.js",
-    "test:browser": "node test/browser/smoke.mjs && node test/browser/yonetim.mjs && node test/browser/v2.mjs && node test/browser/fatura.mjs && node test/browser/kur.mjs",
+    "test:browser": "node test/browser/smoke.mjs && node test/browser/yonetim.mjs && node test/browser/v2.mjs && node test/browser/fatura.mjs && node test/browser/kur.mjs && node test/browser/faz3.mjs",
     "test:browser:yonetim": "node test/browser/yonetim.mjs",
     "test:browser:v2": "node test/browser/v2.mjs",
     "test:browser:fatura": "node test/browser/fatura.mjs",
-    "test:browser:kur": "node test/browser/kur.mjs"
+    "test:browser:kur": "node test/browser/kur.mjs",
+    "test:browser:faz3": "node test/browser/faz3.mjs"
   },
   "engines": {
     "node": ">=20"

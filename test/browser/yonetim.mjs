@@ -10,7 +10,7 @@
  */
 
 import { chromium } from 'playwright';
-import { makeGo } from './nav.mjs';
+import { makeGo, openLogin } from './nav.mjs';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173/';
 const ADMIN = { user: process.env.TEST_USER || 'Admin', pass: process.env.TEST_PASS || 'Admin2026' };
@@ -48,8 +48,7 @@ const waitForToast = (fragment) => page.waitForFunction(
 );
 
 async function login(username, password) {
-  await page.goto(BASE, { waitUntil: 'load' });
-  await page.waitForSelector('.login-card');
+  await openLogin(page, BASE);
   await page.fill('.login-card input[type="text"]', username);
   await page.fill('.login-card input[type="password"]', password);
   await page.click('.login-card button[type="submit"]');
@@ -250,7 +249,7 @@ await step('Menü grupları açılıp kapanabiliyor ve tercih hatırlanıyor', a
   if (groups.length < 5) throw new Error(`grup sayısı: ${groups.length}`);
 
   const before = (await page.$$('.nav-sub .nav-item')).length;
-  await page.locator('.nav-group').filter({ hasText: 'Giderler' }).click();
+  await page.locator('.nav-group').filter({ hasText: 'Gelir - Gider' }).click();
   await page.waitForTimeout(200);
   const after = (await page.$$('.nav-sub .nav-item')).length;
   if (after >= before) throw new Error(`kapanmadı (${before} → ${after})`);
@@ -259,9 +258,9 @@ await step('Menü grupları açılıp kapanabiliyor ve tercih hatırlanıyor', a
   await page.reload({ waitUntil: 'load' });
   await page.waitForSelector('.layout', { timeout: 15000 });
   const stillClosed = await page.$$eval('.nav-group.open', (els) => els.map((e) => e.textContent));
-  if (stillClosed.some((t) => t.includes('Giderler'))) throw new Error('kapalı tercih hatırlanmadı');
+  if (stillClosed.some((t) => t.includes('Gelir - Gider'))) throw new Error('kapalı tercih hatırlanmadı');
 
-  await page.locator('.nav-group').filter({ hasText: 'Giderler' }).click();
+  await page.locator('.nav-group').filter({ hasText: 'Gelir - Gider' }).click();
   await page.waitForTimeout(200);
   const items = await page.$$eval('.nav-sub .nav-item', (els) => els.map((e) => e.textContent.trim()));
   if (!items.some((i) => i.includes('Çalışanlar'))) throw new Error('tekrar açılmadı');
@@ -270,11 +269,13 @@ await step('Menü grupları açılıp kapanabiliyor ve tercih hatırlanıyor', a
 await step('Giderler alt kategorisi tüm gider kalemlerini birleştiriyor', async () => {
   await page.locator('.nav-item').filter({ hasText: /^.{0,4}Giderler$/ }).first().click();
   await page.waitForSelector('.card:has-text("Tüm Gider Kalemleri")');
-  const kpis = await page.$$eval('.kpi', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
-  console.log(`   ${kpis[0]}`);
+  // PRD III §2 — sayfa sade tabloya indirildi; kaynaklar üstte kısayol düğmesi olarak durur.
+  if (await page.$('.donut')) throw new Error('giderler sayfasında grafik kaldı');
+  const kisayollar = await page.$$eval('.btn.small.ghost', (els) => els.map((e) => e.textContent.trim()));
   for (const kaynak of ['Genel Harcamalar', 'Personel', 'Ekstra Çalışan', 'Toptancı']) {
-    if (!kpis.some((k) => k.includes(kaynak))) throw new Error(`${kaynak} kartı yok`);
+    if (!kisayollar.some((k) => k.includes(kaynak))) throw new Error(`${kaynak} kısayolu yok: ${kisayollar.join(' · ')}`);
   }
+  console.log(`   ${(await page.textContent('.filter-bar')).replace(/\s+/g, ' ').trim()}`);
   const rows = (await page.$$('.card:has-text("Tüm Gider Kalemleri") tbody tr')).length;
   if (rows < 5) throw new Error(`kalem sayısı az: ${rows}`);
 
@@ -285,8 +286,8 @@ await step('Giderler alt kategorisi tüm gider kalemlerini birleştiriyor', asyn
 });
 
 await step('Özet kartından ilgili gider sayfasına geçiliyor', async () => {
-  // "Personel (Maaş + SGK)" kartı Çalışanlar sayfasına götürür.
-  await page.locator('.kpi-link').filter({ hasText: 'Personel' }).click();
+  // "Personel (Maaş + SGK)" kısayolu Çalışanlar sayfasına götürür.
+  await page.locator('.btn.small.ghost').filter({ hasText: 'Personel' }).first().click();
   await page.waitForTimeout(400);
   const h1 = await page.textContent('h1');
   if (!h1.includes('Çalışanlar')) throw new Error(h1);
@@ -328,10 +329,25 @@ await step('Sınırlı kullanıcı yalnızca yetkili modülleri görür', async 
     await page.click('.login-card button[type="submit"]');
   }
   await page.waitForSelector('.layout', { timeout: 15000 });
-  const items = await page.$$eval('.nav-item', (els) => els.map((e) => e.textContent.trim()));
-  console.log(`   menü: ${items.join(' · ')}`);
-  if (items.length !== 2) throw new Error(`beklenen 2 modül, görülen ${items.length}`);
-  if (items.some((i) => i.includes('Çalışanlar') || i.includes('Kullanıcı'))) throw new Error('yetkisiz modül görünüyor');
+  // Akordiyon menüde tek grup açık kalır; tüm grupları açıp erişilebilir sayfaları toplarız.
+  const grupSayisi = await page.locator('.nav-group').count();
+  const items = new Set(await page.$$eval('.nav-sub .nav-item', (els) => els.map((e) => e.textContent.trim())));
+  for (let i = 0; i < grupSayisi; i += 1) {
+    const grup = page.locator('.nav-group').nth(i);
+    if ((await grup.getAttribute('aria-expanded')) === 'true') continue; // açık grup kapanmasın
+    await grup.click();
+    await page.waitForTimeout(200);
+    for (const item of await page.$$eval('.nav-sub .nav-item', (els) => els.map((e) => e.textContent.trim()))) {
+      items.add(item);
+    }
+  }
+  const liste = [...items];
+  console.log(`   menü: ${liste.join(' · ')}`);
+  for (const beklenen of ['Dashboard', 'Gelirler']) {
+    if (!liste.some((i) => i.includes(beklenen))) throw new Error(`${beklenen} görünmüyor: ${liste.join(', ')}`);
+  }
+  if (liste.some((i) => i.includes('Çalışanlar') || i.includes('Kullanıcı'))) throw new Error('yetkisiz modül görünüyor');
+  if (liste.some((i) => i.includes('Rezervasyon'))) throw new Error('rezervasyon modülü hâlâ menüde');
 });
 
 await step('Yetkisiz sayfaya adresten gidilemez', async () => {

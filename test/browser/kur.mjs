@@ -9,7 +9,7 @@
  */
 
 import { chromium } from 'playwright';
-import { makeGo } from './nav.mjs';
+import { makeGo, openLogin } from './nav.mjs';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173/';
 const USER = process.env.TEST_USER || 'Admin';
@@ -66,8 +66,7 @@ const SISTEM_TL = TUTAR * KUR;      // 7.410
 const FATURA_TL = 7450;             // kullanıcı girer
 const FARK = FATURA_TL - SISTEM_TL; // +40
 
-await page.goto(BASE, { waitUntil: 'load' });
-await page.waitForSelector('.login-card');
+await openLogin(page, BASE);
 
 async function tryLogin(password) {
   await page.fill('.login-card input[type="text"]', USER);
@@ -121,15 +120,15 @@ await step('İşlem gününün kuru elle deftere yazılıyor', async () => {
 
 /* --------------------------------------- kur mührü ve çift gösterim ---- */
 
-await step('Kuru olmayan güne döviz rezervasyonu kur ister', async () => {
-  await go('Rezervasyonlar');
-  await page.click('button:has-text("Yeni Rezervasyon")');
-  await page.waitForSelector('.modal');
-  await page.fill('.modal input[type="text"]', 'Kur Testi — eksik gün');
-  await page.fill('.modal input[type="date"] >> nth=0', gun(19));
-  await page.fill('.modal input[type="date"] >> nth=1', gun(20));
-  await page.fill('.modal input[type="number"] >> nth=0', '100');
-  await page.selectOption('.modal select.res-currency', 'EUR');
+await step('Kuru olmayan güne döviz faturası kur ister', async () => {
+  await go('Gelirler');
+  await page.click('button:has-text("Fatura Ekle")');
+  await page.waitForSelector('.modal input.inv-customer');
+  await page.fill('.modal input.inv-customer', 'Kur Testi — eksik gün');
+  await page.fill('.modal input.inv-date', gun(19));
+  await page.fill('.modal input.inv-no', 'EKSIK-KUR-1');
+  await page.fill('.modal input.inv-gross', '100');
+  await page.selectOption('.modal select.inv-currency', 'EUR');
   await page.waitForSelector('.modal .fx-missing');
   const uyari = (await page.textContent('.modal .fx-missing')).replace(/\s+/g, ' ');
   if (!uyari.includes('kuru kayıtlı değil')) throw new Error(uyari);
@@ -148,15 +147,16 @@ await step('Kuru olmayan güne döviz rezervasyonu kur ister', async () => {
   await page.click('.modal-header .icon-btn');
 });
 
-await step('Kuru olan güne rezervasyon kuru mühürleniyor ve TL karşılığı görünüyor', async () => {
-  await go('Rezervasyonlar');
-  await page.click('button:has-text("Yeni Rezervasyon")');
-  await page.waitForSelector('.modal');
-  await page.fill('.modal input[type="text"]', 'Kur Farkı Testi');
-  await page.fill('.modal input[type="date"] >> nth=0', ISLEM_GUNU);
-  await page.fill('.modal input[type="date"] >> nth=1', CIKIS_GUNU);
-  await page.fill('.modal input[type="number"] >> nth=0', String(TUTAR));
-  await page.selectOption('.modal select.res-currency', 'EUR');
+await step('Kuru olan güne fatura kuru mühürleniyor ve TL karşılığı görünüyor', async () => {
+  await go('Gelirler');
+  await page.click('button:has-text("Fatura Ekle")');
+  await page.waitForSelector('.modal input.inv-customer');
+  await page.fill('.modal input.inv-customer', 'Kur Farkı Testi');
+  await page.fill('.modal input.inv-date', ISLEM_GUNU);
+  await page.fill('.modal input.inv-no', 'KUR-FARKI-1');
+  await page.fill('.modal input.inv-net', '177');
+  await page.fill('.modal input.inv-gross', String(TUTAR));
+  await page.selectOption('.modal select.inv-currency', 'EUR');
   await page.waitForSelector('.modal .fx-seal');
 
   const muhur = await page.textContent('.modal .fx-seal');
@@ -166,7 +166,6 @@ await step('Kuru olan güne rezervasyon kuru mühürleniyor ve TL karşılığı
   if (money(cift.split('/')[1]) !== SISTEM_TL) throw new Error(`TL karşılığı ${cift}`);
   console.log(`   ${cift.replace(/\s+/g, ' ').trim()}`);
 
-  // Kullanılan kur alanı mührü gösterir.
   if (Number(await page.inputValue('.modal input.fx-rate-input')) !== KUR) throw new Error('kur alanı dolmadı');
 });
 
@@ -180,11 +179,11 @@ await step('"Kesilen Fatura Tutarı (TL)" girilince kur farkı anında hesaplan�
 
   await clearToast();
   await page.click('.modal button:has-text("Kaydet")');
-  await waitToast('Rezervasyon kaydedildi');
+  await waitToast('Fatura kaydedildi');
 });
 
-await step('Rezervasyon listesinde döviz ve TL tutarı yan yana görünüyor', async () => {
-  await go('Rezervasyonlar');
+await step('Fatura listesinde döviz ve TL tutarı yan yana görünüyor', async () => {
+  await go('Gelirler');
   const satir = page.locator('tr:has-text("Kur Farkı Testi")').first();
   const metin = (await satir.textContent()).replace(/\s+/g, ' ');
   if (!metin.includes('€195,00')) throw new Error(`döviz tutarı yok: ${metin}`);
@@ -203,7 +202,7 @@ await step('Kur sonradan değişse de geçmiş kaydın TL karşılığı sabit k
   await page.click('button.fx-add-save');
   await waitToast('kuru deftere eklendi');
 
-  await go('Rezervasyonlar');
+  await go('Gelirler');
   const metin = (await page.locator('tr:has-text("Kur Farkı Testi")').first().textContent()).replace(/\s+/g, ' ');
   if (!metin.includes('₺7.410,00')) throw new Error(`TL karşılığı kaydı: ${metin}`);
   if (!metin.includes('kur 38')) throw new Error(`mühürlenen kur değişmiş: ${metin}`);
@@ -214,9 +213,9 @@ await step('Kur sonradan değişse de geçmiş kaydın TL karşılığı sabit k
 await step('Kur farkı Dashboard ve döküm tablosunda raporlanıyor', async () => {
   await go('Dashboard');
   await page.waitForSelector('.kpi-grid');
-  const kpi = await page.textContent('.kpi:has-text("Kur Farkı")');
-  if (!kpi.includes('Olumlu')) throw new Error(kpi.replace(/\s+/g, ' '));
-  console.log(`   ${kpi.replace(/\s+/g, ' ').trim().slice(0, 120)}`);
+  const formul = (await page.textContent('.card:has-text("Gelir Vergisi Hesabı")')).replace(/\s+/g, ' ');
+  if (!formul.includes('Olumlu kur farkı')) throw new Error(`vergi hesabında kur farkı yok: ${formul.slice(0, 160)}`);
+  console.log(`   ${formul.slice(0, 120)}`);
 
   const dokum = await page.textContent('.card:has-text("Kur Farkı Dökümü")');
   if (!dokum.includes('Kur Farkı Testi')) throw new Error('kayıt dökümde yok');
@@ -291,7 +290,7 @@ await step('Eksik kur günleri listeleniyor ve listeden girilebiliyor', async ()
 
 /* ------------------------------------------------------ fatura tarafı - */
 
-await step('Döviz faturalarda da kur mührü ve kur farkı çalışıyor', async () => {
+await step('İkinci döviz faturasında da kur mührü ve kur farkı çalışıyor', async () => {
   await go('Gelirler');
   await page.click('button:has-text("Fatura Ekle")');
   await page.waitForSelector('.modal input.inv-customer');

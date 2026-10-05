@@ -20,6 +20,7 @@ npm start     # sunucuyu başlatır, adresi ekrana yazar (varsayılan http://127
 | --- | --- |
 | `Admin` | `Admin2026` |
 
+Adres kökü karşılama sayfasını açar; **Giriş Yap** düğmesi giriş ekranına götürür.
 İlk girişte şifre değiştirmeniz **zorunludur**. Ardından **Ayarlar → 🧪 Demo Verisi Yükle**
 ile örnek bir otelin verileriyle sistemi gezebilir, sonra kendi verinizi girebilirsiniz.
 
@@ -44,11 +45,12 @@ cmd /c npm start
 ## Testler
 
 ```bash
-npm test                    # 187 birim ve API testi (node:test, bağımlılıksız)
-npm run test:browser        # 109 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
+npm test                    # 198 birim ve API testi (node:test, bağımlılıksız)
+npm run test:browser        # 120 adımlı uçtan uca tarayıcı akışı (Playwright gerektirir)
 npm run test:browser:v2     # yalnızca PRD v2.0 akışları (restoran, kur, yedek, mobil)
 npm run test:browser:fatura # yalnızca gelen/giden fatura akışı
 npm run test:browser:kur    # yalnızca tarihsel kur ve kur farkı akışı
+npm run test:browser:faz3   # yalnızca Faz 3.0 kabul kriterleri
 ```
 
 Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`, sunucu ayakta olmalı.
@@ -57,12 +59,13 @@ Tarayıcı testi için: `npm i -D playwright && npx playwright install chromium`
 
 | Modül | Ne yapar | PRD |
 | --- | --- | --- |
-| **Giriş & Yetki** | Kullanıcı girişi (şifre göster/gizle), 24 modül için aç/kapa yetkiler, dinamik menü, denetim kaydı | §1, §6, §7 |
-| **Dashboard** | Kâr/zarar, marj, ADR, RevPAR, doluluk, gider dağılımı, başa baş, YOY | BI §3 |
+| **Karşılama Sayfası** | Oturum yokken açılan tanıtım sayfası: hero, faydalar, "Giriş Yap", iletişim ve telif bilgisi | §23 |
+| **Giriş & Yetki** | Kullanıcı girişi (şifre göster/gizle), 23 modül için aç/kapa yetkiler, dinamik menü, denetim kaydı | §1, §6, §7 |
+| **Dashboard** | 9 gösterge: otel/restoran geliri, toplam gider, gelir ve gider KDV'si, turizm payı, konaklama vergisi, gelir vergisi, net kâr — dört adımlı vergi hesabı dökümüyle | §24 |
 | **Gelirler** | Giden (satış) fatura listesi; e-Fatura Excel'inden toplu aktarım, TL/EUR, KDV | §17 |
-| **Rezervasyonlar** | Rezervasyon kaydı, kapasite ve çakışma kontrolü, TL/EUR, acenta komisyonu | §9 |
 | **Fiyat Girişi** | Takvim ızgarası, toplu güncelleme, fiyat kopyalama, maliyet altı fiyat uyarısı | BI §1.1, §3.3 |
-| **Giderler (özet)** | Genel harcama + personel + ekstra çalışan + toptancı faturalarının birleşik listesi, kaynak ve grup dağılımı | §3.1 |
+| **Giderler (özet)** | Tüm gider kalemlerinin tek, sade veri tablosu (grafiksiz) | §3.1, §22 |
+| **İşlenen Faturalar** | Excel'den işlenen gelir/gider faturaları; yükleme ve yön bazında süzme | §21 |
 | **Genel Harcamalar** | Aktif/pasif anahtarı, dekont eki, tekrarlayan giderler, 5 dağıtım yöntemi | §3.4, §3.5 |
 | **Gider Faturaları** | Gelen (alış) fatura listesi; e-Fatura Excel'inden toplu aktarım, mükerrer koruması | §17 |
 | **Çalışanlar** | Sabit personel maaş + SGK, dönem bazlı, önceki aydan kopyalama | §3.2 |
@@ -91,6 +94,8 @@ sunucuda 403 ile reddedilir. Şifreler PBKDF2-SHA512 ile tuzlanarak saklanır.
 
 Sol menü gruplanmıştır ve grup başlıklarına tıklanarak açılıp kapanır; **aynı anda yalnızca
 bir ana kategori açık kalır** ve tercih tarayıcıda hatırlanır. Giriş sonrası Dashboard açılır.
+Menü yapısı: **Genel · Gelir - Gider · Restoran · Kasa · Raporlar · Yönetim**. Rezervasyon
+modülü Faz 3.0 ile kaldırılmıştır; sistem yalnızca finansal verilere odaklanır.
 
 ## Veri ve yedekleme
 
@@ -115,6 +120,22 @@ $env:BACKUP_DIR="C:\Users\<kullanici>\OneDrive\OtelYedek"; npm start
 ```bash
 # macOS / Linux — ağ sürücüsüne yedekle
 BACKUP_DIR=/Volumes/NAS/otel-yedek npm start
+```
+
+## Ana ekran: dokuz gösterge
+
+Dashboard otel ve restoran operasyonunu tek ekranda özetler: **Otel Geliri · Restoran Geliri ·
+Toplam Giderler · Gelir KDV'si · Gider KDV Toplamı · Turizm Payı · Konaklama Vergisi ·
+Gelir Vergisi · NET KÂR**. Turizm payı ve konaklama vergisi yalnızca KDV hariç otel geliri
+üzerinden hesaplanır; restoran geliri bu iki kaleme girmez.
+
+Gelir vergisi dört adımda hesaplanır ve "Gelir Vergisi Hesabı" kartında kalem kalem gösterilir:
+
+```
+1) Toplam Gelir      = Otel + Restoran (+ olumlu kur farkı)
+2) Toplam İndirimler = Toplam Giderler (maaşlar dâhil) + Gider KDV + Konaklama V. + Turizm Payı
+3) Vergi Matrahı     = (1) − (2)
+4) Gelir Vergisi     = Vergi Matrahı × oran        →  NET KÂR = (3) − (4)
 ```
 
 ## e-Fatura Excel aktarımı

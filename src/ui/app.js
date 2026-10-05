@@ -22,14 +22,15 @@ import { expenseSummaryView } from './expenseSummaryView.js';
 import { expensesView, openExpenseForm } from './expensesView.js';
 import { extraWorkersView } from './extraWorkersView.js';
 import { forcePasswordChange, loginView } from './login.js';
+import { landingView } from './landingView.js';
 import { openPrintDialog } from './printDialog.js';
 import { reportsView } from './reportsView.js';
-import { reservationsView } from './reservationsView.js';
 import { roomsView } from './roomsView.js';
 import { settingsView } from './settingsView.js';
 import { backupView } from './backupView.js';
 import { foreignWorkersView } from './foreignWorkersView.js';
 import { purchaseInvoiceView, salesInvoiceView } from './invoiceView.js';
+import { processedInvoicesView } from './processedInvoicesView.js';
 import { restaurantExpenseView } from './restaurantExpenseView.js';
 import { restaurantIncomeView } from './restaurantView.js';
 import { suppliersView } from './suppliersView.js';
@@ -39,18 +40,19 @@ import { openOwnPasswordForm, usersView } from './usersView.js';
 /** PRD §9 — ana menü yapısı. `module` yetkisi olmayan girdi menüde görünmez. */
 const VIEWS = [
   { key: 'panel', label: 'Dashboard', icon: '📊', module: 'dashboard', group: 'Genel', render: dashboardView },
-  { key: 'gelirler', label: 'Gelirler', icon: '🧾', module: 'gelirler', group: 'Genel', render: salesInvoiceView },
-  { key: 'rezervasyonlar', label: 'Rezervasyonlar', icon: '🛎️', module: 'rezervasyonlar', group: 'Genel', render: reservationsView },
   { key: 'takvim', label: 'Fiyat Girişi', icon: '🗓️', module: 'fiyatGirisi', group: 'Genel', render: calendarView },
   { key: 'odalar', label: 'Oda Ayarları', icon: '🚪', module: 'odalar', group: 'Genel', render: roomsView },
 
-  { key: 'tumGiderler', label: 'Giderler', icon: '📉', module: 'giderler', group: 'Giderler', render: expenseSummaryView },
-  { key: 'giderler', label: 'Genel Harcamalar', icon: '🧾', module: 'genelHarcamalar', group: 'Giderler', render: expensesView },
-  { key: 'giderFaturalari', label: 'Gider Faturaları', icon: '📨', module: 'giderFaturalari', group: 'Giderler', render: purchaseInvoiceView },
-  { key: 'calisanlar', label: 'Çalışanlar', icon: '👷', module: 'calisanlar', group: 'Giderler', render: employeesView },
-  { key: 'ekstra', label: 'Ekstra Çalışan', icon: '🧑‍🔧', module: 'ekstraCalisan', group: 'Giderler', render: extraWorkersView },
-  { key: 'yabanci', label: 'Yabancı Çalışanlar', icon: '🌍', module: 'yabanciCalisanlar', group: 'Giderler', render: foreignWorkersView },
-  { key: 'vergiler', label: 'Vergiler', icon: '🧮', module: 'vergiler', group: 'Giderler', render: taxView },
+  // PRD III §2 — "Gelirler" bu kategoriye taşındı; kategori adı "Gelir - Gider" oldu.
+  { key: 'gelirler', label: 'Gelirler', icon: '🧾', module: 'gelirler', group: 'Gelir - Gider', render: salesInvoiceView },
+  { key: 'tumGiderler', label: 'Giderler', icon: '📉', module: 'giderler', group: 'Gelir - Gider', render: expenseSummaryView },
+  { key: 'giderler', label: 'Genel Harcamalar', icon: '🧾', module: 'genelHarcamalar', group: 'Gelir - Gider', render: expensesView },
+  { key: 'giderFaturalari', label: 'Gider Faturaları', icon: '📨', module: 'giderFaturalari', group: 'Gelir - Gider', render: purchaseInvoiceView },
+  { key: 'islenenFaturalar', label: 'İşlenen Faturalar', icon: '✅', module: 'excelIceAktarim', altModule: 'gelirler', group: 'Gelir - Gider', render: processedInvoicesView },
+  { key: 'calisanlar', label: 'Çalışanlar', icon: '👷', module: 'calisanlar', group: 'Gelir - Gider', render: employeesView },
+  { key: 'ekstra', label: 'Ekstra Çalışan', icon: '🧑‍🔧', module: 'ekstraCalisan', group: 'Gelir - Gider', render: extraWorkersView },
+  { key: 'yabanci', label: 'Yabancı Çalışanlar', icon: '🌍', module: 'yabanciCalisanlar', group: 'Gelir - Gider', render: foreignWorkersView },
+  { key: 'vergiler', label: 'Vergiler', icon: '🧮', module: 'vergiler', group: 'Gelir - Gider', render: taxView },
 
   { key: 'restoranGelir', label: 'Restoran Gelirleri', icon: '🍽️', module: 'restoranGelir', group: 'Restoran', render: restaurantIncomeView },
   { key: 'restoranGider', label: 'Ekstra Giderler', icon: '🧂', module: 'restoranGider', group: 'Restoran', render: restaurantExpenseView },
@@ -86,10 +88,20 @@ export async function mount(root) {
 
   const session = await api.get('/api/auth/me').catch(() => null);
   if (!session?.user) {
-    showLogin();
+    // PRD III §3 — oturum yoksa önce karşılama sayfası açılır.
+    // `#giris` adresiyle (veya oturum düştüğünde) doğrudan giriş ekranı gelir.
+    if (location.hash === '#giris') showLogin();
+    else showLanding();
     return null;
   }
   return startApp(root, session.user);
+
+  function showLanding() {
+    landingView(root, () => {
+      location.hash = 'giris';
+      showLogin();
+    });
+  }
 
   function showLogin(message) {
     loginView(root, (user) => startApp(root, user));
@@ -323,7 +335,8 @@ async function startApp(root, user) {
           class: 'btn small danger ghost', type: 'button',
           onClick: async () => {
             await api.post('/api/auth/logout').catch(() => {});
-            location.hash = '';
+            // Çıkışta doğrudan giriş ekranı gelir; karşılama sayfası adres kökü içindir.
+            location.hash = 'giris';
             mount(root);
           },
         }, '🚪 Çıkış Yap')));

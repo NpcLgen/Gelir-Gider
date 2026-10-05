@@ -54,7 +54,8 @@ export function excelView(app) {
   return h('div', { class: 'stack' },
     h('div', {},
       h('h1', {}, 'Excel İşlemleri'),
-      h('p', { class: 'muted' }, 'Gelir ve gider kayıtlarını toplu olarak aktarın veya sistemdeki verileri dışarı alın.')),
+      h('p', { class: 'muted' }, 'Gelir ve gider faturalarını toplu olarak aktarın veya sistemdeki verileri dışarı alın. '
+      + 'Aktarılan faturalar doğrudan kaydedilir ve "İşlenen Faturalar" sayfasında listelenir.')),
 
     canImport ? h('section', { class: 'card stack' },
       h('div', { class: 'row between center wrap gap' },
@@ -65,8 +66,8 @@ export function excelView(app) {
         }, '❓ Yardım / Örnek Şablon')),
       h('div', { class: 'row gap wrap center' },
         h('div', { class: 'segmented' },
-          ...[['gider', 'Giderler'], ['gelir', 'Rezervasyonlar'],
-            ['gelenFatura', 'Gelen Fatura'], ['gidenFatura', 'Giden Fatura']].map(([key, label]) => h('button', {
+          ...[['gider', 'Giderler'], ['gelenFatura', 'Gelen Fatura'],
+            ['gidenFatura', 'Giden Fatura']].map(([key, label]) => h('button', {
             class: `seg-btn${state.kind === key ? ' active' : ''}`, type: 'button',
             onClick: () => { state.kind = key; state.lastResult = null; app.refresh(); },
           }, label))),
@@ -127,15 +128,6 @@ export function openTemplateHelp(app) {
             } catch (err) { toast(err.message, 'error'); }
           },
         }, '⬇️ Gider Şablonu'),
-        h('button', {
-          class: 'btn primary', type: 'button',
-          onClick: async () => {
-            try {
-              const name = await api.download('/api/excel/template', { kind: 'gelir' }, 'ornek-sablon-gelir.xlsx');
-              toast(`${name} indirildi.`);
-            } catch (err) { toast(err.message, 'error'); }
-          },
-        }, '⬇️ Gelir Şablonu'),
         ...[['gelenFatura', 'Gelen Fatura Şablonu'], ['gidenFatura', 'Giden Fatura Şablonu']]
           .map(([kind, label]) => h('button', {
             class: 'btn', type: 'button',
@@ -150,11 +142,6 @@ export function openTemplateHelp(app) {
       h('ul', { class: 'plain-list' },
         ...['Tarih (YYYY-AA-GG)', 'Kategori', 'Açıklama', 'Tutar', 'Para Birimi (TRY/EUR)',
           'Dağıtım (direct/perGuest/weighted/equal/general)', 'Oda No', 'Tedarikçi']
-          .map((c) => h('li', {}, c))),
-      h('h4', {}, 'Gelir sütunları'),
-      h('ul', { class: 'plain-list' },
-        ...['Giriş Tarihi', 'Çıkış Tarihi', 'Oda No', 'Misafir Adı', 'Kişi Sayısı', 'Toplam Tutar',
-          'Para Birimi', 'Kanal', 'Komisyon (%)', 'Kahvaltı Dahil (Evet/Hayır)']
           .map((c) => h('li', {}, c))),
       h('h4', {}, 'Gelen / giden fatura sütunları'),
       h('ul', { class: 'plain-list' },

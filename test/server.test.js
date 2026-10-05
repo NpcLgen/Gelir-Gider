@@ -160,24 +160,28 @@ test('pasif kullanıcı giriş yapamaz', async () => {
 
 /* ----------------------------------------------- §3–§5 Veri uçları --------- */
 
-test('oda, rezervasyon ve gider kaydedilir; doğrulama sunucuda yapılır', async () => {
+test('oda ve gider kaydedilir; doğrulama sunucuda yapılır', async () => {
   const oda = await admin.post('/api/rooms', {
     number: '101', name: 'King Suite', beds: [{ type: 'double', count: 1 }], maxOccupancy: 2, area: 30,
   });
   assert.equal(oda.status, 200);
 
-  const kapasiteAsimi = await admin.post('/api/reservations', {
-    roomId: oda.body.id, guestName: 'Kalabalık', guests: 5,
-    checkIn: '2026-10-05', checkOut: '2026-10-07', totalAmount: 5000,
-  });
-  assert.equal(kapasiteAsimi.status, 422);
-  assert.match(kapasiteAsimi.body.error, /kapasitesi 2 kişidir/);
+  const eksik = await admin.post('/api/expenses', { date: '2026-10-05', description: '', amount: 0 });
+  assert.equal(eksik.status, 422);
 
-  const gecerli = await admin.post('/api/reservations', {
-    roomId: oda.body.id, guestName: 'Yılmaz', guests: 2,
-    checkIn: '2026-10-05', checkOut: '2026-10-08', totalAmount: 18000,
+  const gecerli = await admin.post('/api/expenses', {
+    date: '2026-10-05', category: 'other', description: 'Temizlik malzemesi', amount: 2500,
   });
   assert.equal(gecerli.status, 200);
+});
+
+test('rezervasyon modülü sistemden kaldırıldı (PRD III §2)', async () => {
+  // Uç nokta artık yok: 404 döner, menüde ve modül listesinde de yer almaz.
+  const kayit = await admin.post('/api/reservations', { guestName: 'Yılmaz', guests: 2 });
+  assert.equal(kayit.status, 404);
+
+  const state = await admin.get('/api/state');
+  assert.ok(!state.body.modules.some((m) => m.key === 'rezervasyonlar'), 'modül listesinde kalmamalı');
 });
 
 test('toptancı cari hareketleri kaydedilir ve bakiye hesaplanır', async () => {
@@ -339,14 +343,10 @@ test('geçersiz kur reddedilir', async () => {
   assert.match(sifir.body.error, /0’dan büyük/);
 });
 
-test('döviz rezervasyonu o günün kuruyla mühürlenir', async () => {
-  const oda = await admin.post('/api/rooms', {
-    number: '901', name: 'Kur Testi', beds: [{ type: 'double', count: 1 }], maxOccupancy: 2, area: 20,
-  });
-  const kayit = await admin.post('/api/reservations', {
-    roomId: oda.body.id, guestName: 'Schmidt', guests: 2,
-    checkIn: '2026-09-01', checkOut: '2026-09-02', totalAmount: 195, currency: 'EUR',
-    invoicedAmountTry: 7450,
+test('döviz faturası o günün kuruyla mühürlenir', async () => {
+  const kayit = await admin.post('/api/salesInvoices', {
+    customer: 'Schmidt', date: '2026-09-01', invoiceNo: 'KUR-1',
+    grossAmount: 195, netAmount: 177, currency: 'EUR', invoicedAmountTry: 7450,
   });
   assert.equal(kayit.status, 200, JSON.stringify(kayit.body));
   assert.equal(kayit.body.fxRate, 38, 'o günün kuru mühürlenmeli');
@@ -357,32 +357,18 @@ test('döviz rezervasyonu o günün kuruyla mühürlenir', async () => {
 test('kur sonradan değişse de mühürlenmiş kayıt değişmez', async () => {
   await admin.post('/api/exchangeRates', { date: '2026-09-01', currency: 'EUR', rate: 99, kind: 'manual' });
   const state = await admin.get('/api/state');
-  const kayit = state.body.reservations.find((r) => r.guestName === 'Schmidt');
+  const kayit = state.body.salesInvoices.find((i) => i.invoiceNo === 'KUR-1');
   assert.equal(kayit.fxRate, 38, 'geçmiş kaydın kuru sabit kalmalı');
 });
 
-test('kuru olmayan güne döviz rezervasyonu reddedilir ve kur istenir', async () => {
-  const oda = await admin.post('/api/rooms', {
-    number: '902', name: 'Kursuz Gün', beds: [{ type: 'double', count: 1 }], maxOccupancy: 2, area: 20,
+test('kuru olmayan güne döviz faturası kurla birlikte saklanır', async () => {
+  // Kur defterinde 2020 kaydı yok; kullanıcı kuru elle verirse kabul edilir.
+  const elle = await admin.post('/api/salesInvoices', {
+    customer: 'Elle Kur', date: '2020-01-05', invoiceNo: 'KUR-2',
+    grossAmount: 100, currency: 'EUR', fxRate: 12.5, fxSource: 'Manuel giriş',
   });
-  const kayit = await admin.post('/api/reservations', {
-    roomId: oda.body.id, guestName: 'Kursuz', guests: 2,
-    checkIn: '2020-01-05', checkOut: '2020-01-06', totalAmount: 100, currency: 'EUR',
-  });
-  assert.equal(kayit.status, 422);
-  assert.match(kayit.body.error, /kuru bulunamadı|elle giriniz/);
-});
-
-test('kullanıcı kuru elle verirse kayıt o kurla saklanır', async () => {
-  const state = await admin.get('/api/state');
-  const oda = state.body.rooms.find((r) => r.number === '902');
-  const kayit = await admin.post('/api/reservations', {
-    roomId: oda.id, guestName: 'Elle Kur', guests: 2,
-    checkIn: '2020-01-05', checkOut: '2020-01-06', totalAmount: 100, currency: 'EUR',
-    fxRate: 12.5, fxSource: 'Manuel giriş',
-  });
-  assert.equal(kayit.status, 200, JSON.stringify(kayit.body));
-  assert.equal(kayit.body.fxRate, 12.5);
+  assert.equal(elle.status, 200, JSON.stringify(elle.body));
+  assert.equal(elle.body.fxRate, 12.5);
 });
 
 test('kuru eksik işlem günleri listelenir', async () => {
@@ -390,6 +376,7 @@ test('kuru eksik işlem günleri listelenir', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.currency, 'EUR');
   assert.ok(response.body.dates.some((d) => d.date === '2020-01-05'), JSON.stringify(response.body.dates));
+  assert.equal(response.body.dates.find((d) => d.date === '2020-01-05').count, 1);
 });
 
 test('kur defteri yetkisiz kullanıcıya kapalıdır', async () => {

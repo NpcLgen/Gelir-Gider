@@ -7,6 +7,8 @@
 import { EXPENSE_GROUPS, UTILITY_KINDS, UTILITY_LABELS } from '../core/catalog.js';
 import { compareReports, grossUpForCommission, priceVerdict } from '../core/costEngine.js';
 import { defaultTaxRates, invoiceSummary, restaurantIncomeSummary } from '../core/finance.js';
+import { businessSummary, round2 } from '../core/summary.js';
+import { collectExpenses } from './expenseSummaryView.js';
 import { rateFor } from '../core/fx.js';
 import { periodExchangeDifference } from '../core/rates.js';
 import { previousYear } from '../core/dates.js';
@@ -22,90 +24,84 @@ export function dashboardView(app) {
   const state = app.store.getState();
   const settings = state.settings;
   const p = app.period();
-
-  // PRD v2 §2.1 — restoran geliri genel gelire dahil edilir.
   const rates = { ...defaultTaxRates(), ...(settings.tax ?? {}) };
+
+  /* ---------------- 1 · Otel geliri ---------------- */
+  // Oda konaklama geliri: gelir faturaları + (varsa) geçmiş oda kayıtları.
+  const salesInvoices = app.can('gelirler')
+    ? invoiceSummary(state.salesInvoices, { from: p.from, to: p.to, rateFor: (d) => rateFor(settings.fx, d) })
+    : { gross: 0, kdv: 0, count: 0 };
+  const hotelRevenue = round2(totals.revenue + salesInvoices.gross);
+
+  /* ---------------- 2 · Restoran geliri ------------ */
   const restaurant = app.can('restoranGelir')
     ? restaurantIncomeSummary(state.restaurantIncomes, { from: p.from, to: p.to, kdvRate: rates.kdvRestaurant ?? 10 })
-    : { gross: 0, net: 0, count: 0 };
-  const restaurantExpenses = app.can('restoranGider')
-    ? state.restaurantExpenses.filter((e) => e.active !== false && e.date >= p.from && e.date <= p.to)
-      .reduce((sum, e) => sum + e.amount, 0)
-    : 0;
+    : { gross: 0, net: 0, kdv: 0, count: 0 };
 
-  // Gelen/giden faturalar (e-fatura) gelir ve gider toplamlarına katılır.
-  const fxRate = (date) => rateFor(settings.fx, date);
-  const salesInvoices = app.can('gelirler')
-    ? invoiceSummary(state.salesInvoices, { from: p.from, to: p.to, rateFor: fxRate })
-    : { gross: 0, count: 0 };
+  /* ---------------- 3 · Toplam giderler ------------ */
+  const { rows: expenseRows, totals: expenseTotals, grandTotal: expenseTotal } = collectExpenses(app);
+  const payroll = round2(expenseTotals.personel ?? 0);
+
+  /* ---------------- 5 · Gider KDV toplamı ---------- */
+  // Her gider faturasındaki (KDV dahil − KDV hariç) farkının toplamı.
   const purchaseInvoices = app.can('giderFaturalari')
-    ? invoiceSummary(state.purchaseInvoices, { from: p.from, to: p.to, rateFor: fxRate })
-    : { gross: 0, count: 0 };
+    ? invoiceSummary(state.purchaseInvoices, { from: p.from, to: p.to, rateFor: (d) => rateFor(settings.fx, d) })
+    : { gross: 0, kdv: 0, count: 0 };
+  const supplierVat = app.can('toptancilar')
+    ? round2(state.supplierTxns
+      .filter((t) => t.active !== false && t.type === 'invoice' && t.date >= p.from && t.date <= p.to)
+      .reduce((sum, t) => sum + (t.amount * (t.kdvRate ?? 0)) / (100 + (t.kdvRate ?? 0)), 0))
+    : 0;
+  const expenseVat = round2(purchaseInvoices.kdv + supplierVat);
 
-  // Kur farkı (PRD §19): kesilen fatura TL'si ile kurdan hesaplanan tutar arasındaki fark.
+  /* ---------------- Kur farkı ---------------------- */
   const fxDiff = periodExchangeDifference({
-    reservations: app.can('rezervasyonlar') ? state.reservations : [],
+    reservations: state.reservations, // geçmiş oda gelirleri (modül kaldırıldı, veri korunuyor)
     salesInvoices: app.can('gelirler') ? state.salesInvoices : [],
     purchaseInvoices: app.can('giderFaturalari') ? state.purchaseInvoices : [],
     from: p.from, to: p.to,
   });
 
-  const revenueParts = [
-    ['Oda', totals.revenue],
-    ['restoran', restaurant.gross],
-    ['fatura', salesInvoices.gross],
-    ['kur farkı', fxDiff.gain],
-  ].filter(([, value]) => value > 0);
-
-  const combinedRevenue = Math.round((totals.revenue + restaurant.gross + salesInvoices.gross + fxDiff.gain) * 100) / 100;
-  const combinedExpenses = Math.round((totals.expenses + restaurantExpenses + purchaseInvoices.gross + fxDiff.loss) * 100) / 100;
-  const combinedProfit = Math.round((combinedRevenue - combinedExpenses) * 100) / 100;
-
-  const marginTone = totals.targetMet ? 'good' : 'bad';
+  /* ---------------- Finansal motor ----------------- */
+  const summary = businessSummary({
+    hotelRevenue,
+    restaurantRevenue: restaurant.gross,
+    expenses: expenseTotal,
+    payroll,
+    expenseVat,
+    exchangeGain: fxDiff.gain,
+    exchangeLoss: fxDiff.loss,
+    rates,
+  });
 
   const kpis = h('div', { class: 'kpi-grid' },
-    kpi('Toplam Gelir', present.money(combinedRevenue),
-      restaurant.gross > 0 || salesInvoices.gross > 0
-        ? revenueParts.map(([label, value]) => `${label} ${present.money(value)}`).join(' + ')
-        : `Komisyon sonrası ${present.money(totals.netRevenue)}`),
-    kpi('Toplam Gider', present.money(combinedExpenses),
-      purchaseInvoices.gross > 0
-        ? `${present.money(totals.expenses)} kayıt + fatura ${present.money(purchaseInvoices.gross)}`
-        : `${present.money(totals.totalCost)} odalara dağıtıldı`),
-    kpi('Net Kâr', present.money(combinedProfit),
-      restaurant.gross > 0 || salesInvoices.gross > 0
-        ? 'Restoran ve faturalar dâhil'
-        : `Hedef marj %${Math.round(totals.targetMargin * 100)}`, marginTone),
-    kpi('Kâr Marjı', formatPercent(totals.margin),
-      totals.targetMet ? '✔ hedefin üzerinde' : '✖ hedefin altında', marginTone),
-    kpi('ADR', present.money(totals.adr), 'Ortalama satılan gece fiyatı'),
-    kpi('RevPAR', present.money(totals.revpar), `${formatNumber(totals.availableRoomNights)} satılabilir gece`),
-    kpi('Doluluk', formatPercent(totals.occupancyRate), `${formatNumber(totals.roomNights)} oda-gecesi`),
-    kpi('Kişi Başı Maliyet', present.money(totals.costPerGuestNight), `${formatNumber(totals.guestNights)} kişi-gece`),
-    restaurant.gross > 0
-      ? kpi('Restoran Geliri', present.money(restaurant.gross), `${restaurant.count} gün sonu · KDV ${present.money(restaurant.kdv)}`)
-      : null,
-    salesInvoices.gross > 0
-      ? kpi('Gelir Faturaları', present.money(salesInvoices.gross),
-        `${salesInvoices.count} giden fatura · KDV ${present.money(salesInvoices.kdv)}`)
-      : null,
-    purchaseInvoices.gross > 0
-      ? kpi('Gider Faturaları', present.money(purchaseInvoices.gross),
-        `${purchaseInvoices.count} gelen fatura · KDV ${present.money(purchaseInvoices.kdv)}`, 'bad')
-      : null,
-    fxDiff.invoicedCount > 0 || fxDiff.pendingCount > 0
-      ? kpi('Kur Farkı',
-        `${fxDiff.net >= 0 ? '+' : '−'}${present.money(Math.abs(fxDiff.net))}`,
-        `Olumlu ${present.money(fxDiff.gain)} · olumsuz ${present.money(fxDiff.loss)}`
-        + (fxDiff.pendingCount ? ` · ${fxDiff.pendingCount} fatura bekliyor` : ''),
-        fxDiff.net >= 0 ? 'good' : 'bad')
-      : null);
+    kpi('Otel Geliri', present.money(summary.hotelRevenue),
+      `KDV hariç ${present.money(summary.hotelNetRevenue)}`
+      + (salesInvoices.count ? ` · ${salesInvoices.count} fatura` : '')),
+    kpi('Restoran Geliri', present.money(summary.restaurantRevenue),
+      restaurant.count ? `${restaurant.count} gün sonu · KDV ${present.money(restaurant.kdv)}` : 'Gün sonu kaydı yok'),
+    kpi('Toplam Giderler', present.money(summary.totalExpenses),
+      `${expenseRows.length} kalem · maaşlar ${present.money(summary.payroll)} dâhil`, 'bad'),
+    kpi('Gelir KDV’si (Otel + Restoran)', present.money(summary.incomeVat),
+      `Otel ${present.money(summary.hotelVat)} + restoran ${present.money(summary.restaurantVat)}`),
+    kpi('Gider KDV Toplamı', present.money(summary.expenseVat),
+      'Faturalardaki dahil − hariç farkı'),
+    kpi('Turizm Payı', present.money(summary.tourismShare),
+      `Yalnızca otel geliri · %${summary.rates.tourismShare}`),
+    kpi('Konaklama Vergisi', present.money(summary.accommodationTax),
+      `Yalnızca otel geliri · %${summary.rates.accommodationTax}`),
+    kpi('Gelir Vergisi', present.money(summary.incomeTax),
+      `Matrah ${present.money(summary.taxBase)} · %${summary.rates.incomeTax}`,
+      summary.incomeTax > 0 ? 'bad' : ''),
+    kpi('NET KÂR', present.money(summary.netProfit),
+      `Marj ${formatPercent(summary.margin)}`, summary.netProfit >= 0 ? 'good' : 'bad'));
 
   return h('div', { class: 'stack' },
     h('div', {},
       h('h1', {}, 'Yönetici Özeti'),
       h('p', { class: 'muted' }, `${report.period.from} → ${report.period.to} · tutarlar ${present.currency} cinsinden`)),
     kpis,
+    taxFormulaCard(summary, present),
     h('div', { class: 'split-2' }, expenseBreakdown(report, present), breakEvenCard(report, present, totals)),
     fxDiff.rows.length ? exchangeDifferenceCard(fxDiff, present) : null,
     pricingTable(app, report, present),
@@ -114,6 +110,44 @@ export function dashboardView(app) {
     report.unallocated.items.length ? unallocatedCard(report, present) : null,
     h('p', { class: 'muted small method-footer' },
       `Genel gider dağıtımı: ${methodLabel(settings.allocationMethod)} · boş oda sabit payı %${Math.round((settings.fixedShare ?? 0) * 100)} · kur 1 € = ${formatDecimal(settings.fx.rate)} ₺`));
+}
+
+/** Gelir vergisi algoritmasının dört adımını şeffaf gösterir (PRD III §4). */
+function taxFormulaCard(summary, present) {
+  const line = (label, value, tone) => h('div', { class: 'kv' },
+    h('span', {}, label),
+    h('strong', { class: tone || '' }, present.money(value)));
+
+  return h('section', { class: 'card stack', dataset: { print: 'kdv' } },
+    h('header', { class: 'card-header' },
+      h('h3', {}, 'Gelir Vergisi Hesabı'),
+      h('span', { class: 'muted small' }, 'PRD III §4 — dört adımlı algoritma')),
+    h('div', { class: 'split-2' },
+      h('div', { class: 'stack tight' },
+        h('h4', {}, '1 · Toplam Gelir'),
+        h('div', { class: 'kv-list' },
+          line('Otel geliri', summary.hotelRevenue),
+          line('Restoran geliri', summary.restaurantRevenue),
+          summary.exchangeGain > 0 ? line('Olumlu kur farkı', summary.exchangeGain) : null,
+          line('Toplam', summary.totalRevenueWithFx, 'good'))),
+      h('div', { class: 'stack tight' },
+        h('h4', {}, '2 · Toplam İndirimler'),
+        h('div', { class: 'kv-list' },
+          line('Sigortalı çalışan maaşları', summary.payroll),
+          line('Diğer giderler', summary.otherExpenses),
+          summary.exchangeLoss > 0 ? line('Olumsuz kur farkı', summary.exchangeLoss) : null,
+          line('Gider KDV toplamı', summary.expenseVat),
+          line('Konaklama vergisi', summary.accommodationTax),
+          line('Turizm payı', summary.tourismShare),
+          line('Toplam', summary.totalDeductions, 'bad')))),
+    h('div', { class: 'kv-list' },
+      line('3 · Vergi Matrahı (gelir − indirimler)', summary.taxBase),
+      line(`4 · Gelir Vergisi (matrah × %${summary.rates.incomeTax})`, summary.incomeTax, 'bad'),
+      line('NET KÂR (matrah − gelir vergisi)', summary.netProfit, summary.netProfit >= 0 ? 'good' : 'bad')),
+    h('p', { class: 'muted small' },
+      'Sigortalı çalışan maaşları "Toplam Giderler" kartının içindedir; indirimlerde iki kez sayılmaz. '
+      + 'Turizm payı ve konaklama vergisi yalnızca KDV hariç otel geliri üzerinden hesaplanır. '
+      + 'Oranları Ayarlar → Vergi ve Finans bölümünden değiştirebilirsiniz.'));
 }
 
 const methodLabel = (key) => ({

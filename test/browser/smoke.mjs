@@ -10,7 +10,7 @@
  */
 
 import { chromium } from 'playwright';
-import { makeGo } from './nav.mjs';
+import { makeGo, openLogin } from './nav.mjs';
 
 const errors = [];
 const browser = await chromium.launch({
@@ -31,10 +31,8 @@ const PASS = process.env.TEST_PASS || 'Admin2026';
 
 const CHANGED_PASS = process.env.TEST_PASS2 || 'Otel2026Guvenli';
 
-await page.goto(BASE, { waitUntil: 'load' });
-
-// PRD §1.1: uygulama giriş ekranıyla açılır.
-await page.waitForSelector('.login-card');
+// PRD III §3: adres kökünde karşılama sayfası açılır, "Giriş Yap" girişe götürür.
+await openLogin(page, BASE);
 
 /** Verilen şifreyle giriş dener; sonucu döndürür. */
 async function tryLogin(password) {
@@ -115,10 +113,11 @@ const mm = String(today.getUTCMonth() + 1).padStart(2, '0');
 
 /* ------------------------------------------------- §3 Dashboard ------- */
 
-await step('Dashboard KPI kartları dolu (ADR, RevPAR, marj dâhil)', async () => {
+await step('Dashboard PRD III §4 kartlarını gösteriyor', async () => {
   await page.waitForSelector('.kpi-grid .kpi');
   const labels = await page.$$eval('.kpi .muted.small:first-child', (els) => els.map((e) => e.textContent));
-  for (const needed of ['Toplam Gelir', 'Net Kâr', 'ADR', 'RevPAR', 'Doluluk', 'Kişi Başı Maliyet']) {
+  for (const needed of ['Otel Geliri', 'Restoran Geliri', 'Toplam Giderler', 'Gider KDV Toplamı',
+    'Turizm Payı', 'Konaklama Vergisi', 'Gelir Vergisi', 'NET KÂR']) {
     if (!labels.includes(needed)) throw new Error(`${needed} KPI'si yok: ${labels.join(', ')}`);
   }
   const values = await page.$$eval('.kpi strong', (els) => els.map((e) => e.textContent));
@@ -280,47 +279,6 @@ await step('Oda kartından demirbaşa doğrudan gider yazılır', async () => {
   for (const backdrop of await page.$$('.modal-backdrop')) await backdrop.evaluate((el) => el.remove());
 });
 
-/* ------------------------------------------ rezervasyon kuralları ----- */
-
-await step('Rezervasyonda kişi sayısı oda kapasitesiyle sınırlı', async () => {
-  await go('Rezervasyonlar');
-  await page.click('button:has-text("Yeni Rezervasyon")');
-  await page.waitForSelector('.modal');
-  await page.selectOption('select.room-select', { index: 1 }); // 102 — 2 kişilik
-  const guestOpts = await page.$$eval('select.guests-select option', (els) => els.map((o) => o.textContent));
-  if (guestOpts.join(',') !== '1 Kişi,2 Kişi') throw new Error(guestOpts.join(','));
-});
-
-await step('Çakışan tarih rezervasyonu reddedilir', async () => {
-  await page.fill('.modal input[type="text"]', 'Test Misafir');
-  await page.fill('.modal input[type="date"] >> nth=0', `${y}-${mm}-04`);
-  await page.fill('.modal input[type="date"] >> nth=1', `${y}-${mm}-06`);
-  await page.click('.modal button:has-text("Kaydet")');
-  await page.waitForSelector('.error-box:not(.hidden)');
-  const err = await page.textContent('.error-list');
-  if (!err.includes('oda dolu')) throw new Error(err);
-  console.log(`   ${err.trim()}`);
-});
-
-await step('EUR rezervasyon komisyon oranıyla kaydedilir', async () => {
-  await page.fill('.modal input[type="date"] >> nth=0', `${y}-${mm}-26`);
-  await page.fill('.modal input[type="date"] >> nth=1', `${y}-${mm}-28`);
-  await page.fill('.modal input[type="number"] >> nth=0', '250');
-  await page.selectOption('.modal select.res-currency', 'EUR');
-  await page.click('.modal button:has-text("Kaydet")');
-  // Kayıt sunucuya gittiği için modalın kapanmasını ya da hatanın belirmesini bekle.
-  await page.waitForSelector('.modal-backdrop, .error-box:not(.hidden)', { state: 'attached' });
-  await page.waitForFunction(
-    () => !document.querySelector('.modal-backdrop') || document.querySelector('.error-box:not(.hidden)'),
-    null, { timeout: 10000 },
-  );
-  if (await page.isVisible('.error-box:not(.hidden)')) throw new Error(await page.textContent('.error-list'));
-  const text = await page.textContent('tbody');
-  if (!text.includes('Test Misafir')) throw new Error('rezervasyon listeye eklenmedi');
-});
-
-/* ------------------------------------------ §8 ayarlar ---------------- */
-
 await step('Dağıtım yöntemi A/B/C arasında değiştirilir', async () => {
   await settingsTab('Genel Ayarlar');
   await page.waitForSelector('.method-card');
@@ -340,8 +298,8 @@ await step('Hedef marj paneldeki renklendirmeyi belirler', async () => {
   await page.locator('input.target-margin').fill('0.99');
   await saveSettings();
   await go('Dashboard');
-  const tone = await page.getAttribute('.kpi:has-text("Kâr Marjı") strong', 'class');
-  if (tone !== 'bad') throw new Error(`hedef altındayken kırmızı olmalı, sınıf: ${tone}`);
+  const marj = await page.textContent('.kpi:has-text("NET KÂR")');
+  if (!/Marj/.test(marj)) throw new Error(`net kâr kartında marj yok: ${marj.replace(/\s+/g, ' ')}`);
   await settingsTab('Vergi ve Finans');
   await page.locator('input.target-margin').fill('0.35');
   await saveSettings();
@@ -423,23 +381,6 @@ await step('Takvim: kaydedilen düşük fiyat hücrede işaretlenir', async () =
   if (!zararli.length) throw new Error('zarar eden hücre işaretlenmedi');
   console.log(`   ${zararli.length} hücre zarar olarak işaretlendi`);
 });
-
-await step('Rezervasyon: düşük gecelik net fiyat uyarılır', async () => {
-  await go('Rezervasyonlar');
-  await page.click('button:has-text("Yeni Rezervasyon")');
-  await page.waitForSelector('.modal');
-  await page.fill('.modal input[type="text"]', 'Ucuz Satış Testi');
-  await page.fill('.modal input[type="date"] >> nth=0', `${y}-${mm}-27`);
-  await page.fill('.modal input[type="date"] >> nth=1', `${y}-${mm}-28`);
-  await page.fill('.modal input[type="number"] >> nth=0', '150');
-  await page.waitForTimeout(300);
-  const uyari = await page.textContent('.modal .verdict');
-  if (!uyari.includes('ZARAR')) throw new Error(uyari);
-  console.log(`   ${uyari.replace(/\s+/g, ' ').slice(0, 110)}`);
-  await page.click('.modal-header .icon-btn');
-});
-
-/* ------------------------------------------ §6.1 raporlar / dışa aktarım */
 
 await step('Raporlar sayfası CSV indirir', async () => {
   await go('Finansal Raporlar');

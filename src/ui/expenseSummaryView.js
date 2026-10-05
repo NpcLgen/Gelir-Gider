@@ -1,18 +1,17 @@
 /**
- * Giderler (Tümü) — PRD §3.1 gider ana menüsü.
- * Genel harcamalar, personel, ekstra çalışan, toptancı faturaları ve vergiler
- * tek listede birleştirilir; dönemin toplam gider tablosu buradan okunur.
+ * Giderler (Tümü) — PRD §3.1 gider ana menüsü, PRD III §2 ile sadeleştirildi.
+ *
+ * Genel harcamalar, gider faturaları, personel, ekstra/yabancı çalışan ve
+ * toptancı faturaları tek listede birleşir. Sayfa grafik veya gösterge paneli
+ * içermez: Gelir paneliyle aynı sade veri tablosu düzenini kullanır.
  */
 
-import { EXPENSE_GROUPS } from '../core/catalog.js';
 import { expandExpenses } from '../core/costEngine.js';
-import { defaultTaxRates, employeeTotal, invoiceAmount, taxReport } from '../core/finance.js';
+import { employeeTotal, invoiceAmount } from '../core/finance.js';
 import { rateFor } from '../core/fx.js';
 import { categoryOf } from '../core/model.js';
 import { formatDate, formatMoney } from '../core/format.js';
-import { donutChart } from './charts.js';
 import { h } from './dom.js';
-import { taxInputs } from './taxView.js';
 
 /** Gider kaynakları — her biri ayrı modül yetkisiyle korunur. */
 const SOURCES = [
@@ -163,13 +162,6 @@ export function expenseSummaryView(app) {
   const state = app.store.getState();
 
   const visibleSources = SOURCES.filter((s) => app.can(s.module));
-  const slices = visibleSources
-    .map((s) => ({ label: s.label, value: totals[s.key], color: s.color }))
-    .filter((s) => s.value > 0);
-
-  // Vergi yükü ayrı gösterilir: gider değil, kârdan ödenen yükümlülüktür.
-  const taxLoad = app.can('vergiler') ? taxSummary(app) : null;
-
   const table = h('table', {},
     h('thead', {}, h('tr', {}, ...['Tarih', 'Kaynak', 'Açıklama', 'Detay', 'Tutar'].map((t) => h('th', {}, t)))),
     h('tbody', {}, ...(rows.length
@@ -188,94 +180,30 @@ export function expenseSummaryView(app) {
       })
       : [h('tr', {}, h('td', { colspan: '5', class: 'empty' }, 'Bu dönemde gider kaydı yok.'))])));
 
+  // PRD III §2 — sayfanın üstündeki grafik/dashboard alanı kaldırıldı;
+  // Gelir paneliyle aynı sade veri tablosu düzeni kullanılır.
   return h('div', { class: 'stack print-area' },
     h('div', { class: 'row between center wrap gap no-print' },
       h('div', {},
         h('h1', {}, 'Giderler'),
         h('p', { class: 'muted' }, `${formatDate(p.from)} → ${formatDate(p.to)} · tüm gider kalemleri tek listede`)),
-      app.can('yazdirma')
-        ? h('button', { class: 'btn', type: 'button', onClick: () => app.openPrintDialog('Giderler') }, '🖨️ Yazdır')
-        : null),
-
-    h('div', { class: 'kpi-grid' },
-      h('div', { class: 'card kpi' },
-        h('span', { class: 'muted small' }, 'Dönem Toplam Gider'),
-        h('strong', { class: 'bad' }, present.money(grandTotal)),
-        h('span', { class: 'muted small' }, `${rows.length} kalem`)),
-      ...visibleSources.map((source) => h('button', {
-        class: 'card kpi kpi-link', type: 'button',
-        title: `${source.label} sayfasına git`,
-        onClick: () => app.go(source.view),
-      },
-        h('span', { class: 'muted small' },
-          h('span', { class: 'swatch', style: { background: source.color } }), source.label),
-        h('strong', {}, present.money(totals[source.key])),
-        h('span', { class: 'muted small' },
-          grandTotal > 0 ? `%${((totals[source.key] / grandTotal) * 100).toFixed(1)} pay` : '—')))),
-
-    h('div', { class: 'split-2' },
-      h('section', { class: 'card stack' },
-        h('h3', {}, 'Gider Kaynakları'),
-        h('div', { class: 'row gap wrap center' },
-          donutChart(slices, {
-            size: 190,
-            format: (v) => present.money(v),
-            centerLabel: 'Toplam',
-            centerValue: present.money(grandTotal),
-          }),
-          h('div', { class: 'legend' }, ...(slices.length
-            ? slices.map((slice) => h('div', { class: 'legend-row' },
-              h('span', { class: 'swatch', style: { background: slice.color } }),
-              h('span', {}, slice.label),
-              h('strong', { class: 'right' }, present.money(slice.value))))
-            : [h('p', { class: 'muted small' }, 'Bu dönemde gider yok.')])))),
-
-      h('section', { class: 'card stack' },
-        h('h3', {}, 'Gider Grupları'),
-        h('p', { class: 'muted small' }, 'Sabit, değişken, operasyonel ve pazarlama ayrımı (PRD §2.2).'),
-        h('div', { class: 'kv-list' }, ...EXPENSE_GROUPS.map((group) => {
-          const value = rows.filter((r) => r.group === group.key).reduce((sum, r) => sum + r.amount, 0);
-          return h('div', { class: 'kv' },
-            h('span', {},
-              h('span', { class: 'group-dot', style: { background: group.color } }), group.label),
-            h('strong', {}, present.money(value)));
-        })),
-        taxLoad
-          ? h('div', { class: 'stack tight' },
-            h('hr'),
-            h('h4', {}, 'Vergi Yükü'),
-            h('div', { class: 'kv-list' },
-              h('div', { class: 'kv' }, h('span', {}, 'Ödenecek net KDV'), h('strong', {}, present.money(taxLoad.netKdv))),
-              h('div', { class: 'kv' }, h('span', {}, 'Konaklama vergisi + turizm payı'), h('strong', {}, present.money(taxLoad.others))),
-              h('div', { class: 'kv' }, h('span', {}, 'Gelir / kurumlar vergisi'), h('strong', {}, present.money(taxLoad.incomeTax)))),
-            h('button', {
-              class: 'btn small ghost no-print', type: 'button',
-              onClick: () => app.go('vergiler'),
-            }, 'Vergi raporunu aç →'),
-            h('p', { class: 'muted small' }, 'Vergiler gider kalemi değildir; kârdan ödenen yükümlülük olarak ayrı izlenir.'))
+      h('div', { class: 'row gap wrap' },
+        ...visibleSources.map((source) => h('button', {
+          class: 'btn small ghost', type: 'button',
+          title: `${source.label} sayfasına git`,
+          onClick: () => app.go(source.view),
+        }, source.label)),
+        app.can('yazdirma')
+          ? h('button', { class: 'btn', type: 'button', onClick: () => app.openPrintDialog('Giderler') }, '🖨️ Yazdır')
           : null)),
+
+    h('div', { class: 'card filter-bar row between center wrap gap' },
+      h('span', { class: 'muted small' }, `${rows.length} gider kalemi`),
+      h('strong', { class: 'bad' }, `Dönem Toplamı: ${present.money(grandTotal)}`)),
 
     h('section', { class: 'card table-card', dataset: { print: 'giderler' } },
       h('header', { class: 'card-header' },
         h('h3', {}, 'Tüm Gider Kalemleri'),
         h('span', { class: 'muted small' }, 'Tekrarlayan giderler ve dönem faturaları dâhil')),
       table));
-}
-
-/** Dönemin vergi yükü özeti (vergi raporuyla aynı girdilerden hesaplanır). */
-function taxSummary(app) {
-  const settings = app.store.getState().settings;
-  const rates = { ...defaultTaxRates(), ...(settings.tax ?? {}) };
-  const inputs = taxInputs(app);
-  const report = taxReport({
-    revenue: inputs.revenue,
-    expenses: inputs.expensesTotal,
-    expenseKdvBase: inputs.kdvBase,
-    rates,
-  });
-  return {
-    netKdv: Math.max(0, report.netKdv),
-    others: report.accommodationTax + report.tourismShare,
-    incomeTax: report.incomeTax,
-  };
 }

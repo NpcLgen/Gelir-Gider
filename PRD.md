@@ -2,7 +2,7 @@
 ## Ürün Gereksinimleri Dokümanı (PRD) — Fonksiyonel Gereksinimler ve Kabul Kriterleri
 
 **Sürüm:** 2.0 · **Durum:** Uygulandı — bu depodaki kod bu belgeyi karşılar.
-**Doğrulama:** 187 birim/API testi (`npm test`) + 109 adımlı tarayıcı akış testi (`npm run test:browser`).
+**Doğrulama:** 198 birim/API testi (`npm test`) + 120 adımlı tarayıcı akış testi (`npm run test:browser`).
 **Sürüm 2.0 teslim listesi:** 18/18 madde tamamlandı — bkz. [§12](#12-sürüm-20-teslim-listesi-1818).
 **Ek belge:** Oda kârlılığı, maliyet dağıtımı ve fiyat tavsiyesi için [PRD-BI.md](PRD-BI.md).
 
@@ -360,7 +360,7 @@ scripts/serve.js      → tek komutla statik dosya + API sunucusu
 server/
   db.js               → dosya tabanlı depo, atomik yazma, sıralı güncelleme
   auth.js             → PBKDF2 şifre saklama, oturum, varsayılan Admin
-  permissions.js      → 24 modül, yetki kontrolü
+  permissions.js      → 23 modül, yetki kontrolü
   api.js              → kimlik, CRUD, fiyat, ayarlar, faturalar, kullanıcılar, Excel,
                         yedekleme, döviz kuru
   excel.js            → bağımlılıksız XLSX okuma/yazma (node:zlib), şablonlar
@@ -372,6 +372,7 @@ src/core/             → tarayıcı ve sunucunun paylaştığı saf mantık
   finance.js          → personel, toptancı cari, kasa, vergi, fatura hesapları
   costEngine.js       → maliyet dağıtımı, fiyat eşikleri (bkz. PRD-BI.md)
   rates.js            → tarihsel kur defteri, kur mührü, kur farkı
+  summary.js          → Dashboard göstergeleri ve gelir vergisi algoritması (Faz 3)
   model.js · dates.js · fx.js · format.js · api.js · store.js
 src/ui/               → görünümler (login, dashboard, giderler/özet, toptancılar, kasa,
                         vergi, kullanıcılar, excel, yazdırma, takvim, oda kartı…)
@@ -733,7 +734,7 @@ netsh advfirewall firewall add rule name="Otel Finans" dir=in action=allow proto
 | Vergi oranları yönetilebilir parametre | 6 oran + indirilebilirlik anahtarı Ayarlar'dan düzenlenir |
 | Kritik kayıtlar silinmek yerine pasife alınır | `active: false` (gider, restoran geliri, çalışan kayıtları) |
 | Kritik işlemler kullanıcı ve tarihle kaydedilir | `server/audit.js` — Kullanıcı ve Yetki sayfasında listelenir |
-| Yetkiler hem arayüzde hem API'de | 24 modül; menü filtrelenir, her uç nokta ayrıca 403 döner |
+| Yetkiler hem arayüzde hem API'de | 23 modül; menü filtrelenir, her uç nokta ayrıca 403 döner |
 | Masaüstü ve mobil kullanım | §14.2 — tablet ve telefon kırılma noktaları |
 
 ---
@@ -970,3 +971,121 @@ Raporlara yansıma:
 | K6 | Kur bulunamazsa hata yerine kullanıcıdan kur isteniyor | ✅ | `kuru olmayan döviz rezervasyonu kullanıcıdan kur ister` · tarayıcı: `Kuru olmayan güne döviz rezervasyonu kur ister` |
 | K7 | Kur defteri yetkisiz kullanıcıya kapalı | ✅ | `kur defteri yetkisiz kullanıcıya kapalıdır` |
 | K8 | Kuru eksik işlem günleri listelenip doldurulabiliyor | ✅ | `kuru eksik işlem günleri listelenir` · tarayıcı: `Eksik kur günleri listeleniyor ve listeden girilebiliyor` |
+
+---
+
+# Faz 3.0 — Güncellenmiş Gereksinimler (PRD III)
+
+## 20. Faz 3.0 Teslim Listesi
+
+| # | Kabul kriteri | Durum | Doğrulayan test |
+| --- | --- | --- | --- |
+| 1 | Excel'den yüklenen faturalar otomatik işleniyor ve "İşlenen Faturalar"da hatasız görünüyor | ✅ | `§1 Excel’den yüklenen faturalar taslak beklemeden işleniyor`, `§1 "İşlenen Faturalar" sekmesi aktarılanları listeliyor` |
+| 2 | "Rezervasyonlar" menüsü sistemden tamamen arındırıldı | ✅ | `§2 Rezervasyonlar modülü sistemden kaldırıldı`, `rezervasyon modülü sistemden kaldırıldı (PRD III §2)` |
+| 3 | "Gelirler" menüsü "Gelir - Gider" başlığı altına taşındı | ✅ | `§2 "Gelir - Gider" kategorisi var, "Gelirler" altında` |
+| 4 | Giderler sayfasındaki grafik/dashboard kaldırıldı, tablo görünümüne geçildi | ✅ | `§2 Giderler sayfası grafiksiz sade tabloya indi` |
+| 5 | Karşılama sayfası eklendi, "Giriş Yap" login ekranına yönlendiriyor | ✅ | `§3 Adres kökünde karşılama sayfası açılıyor`, `§3 "Giriş Yap" düğmeleri giriş ekranına götürüyor` |
+| 6 | Turizm payı ve konaklama vergisi yalnızca otel gelirinden hesaplanıyor | ✅ | `turizm payı ve konaklama vergisi SADECE otel geliri üzerinden hesaplanır`, `§4 Turizm payı ve konaklama vergisi yalnızca otel gelirinden` |
+| 7 | Gider KDV toplamı faturaların dahil/hariç farkından süzülüyor | ✅ | `gider KDV’si doğrudan fatura farkından gelir`, `§4 Gider KDV’si fatura dahil − hariç farkından süzülüyor` |
+| 8 | Gelir vergisi matrahı dört adımlı algoritmayla hesaplanıyor | ✅ | `gelir vergisi dört adımlı algoritmayla hesaplanır`, `§4 Gelir vergisi dört adımlı algoritmayla hesaplanıyor` |
+
+---
+
+## 21. Excel Aktarımı ve İşlenen Faturalar (PRD III §1)
+
+* Excel yüklendiğinde ayrıştırıcı sütunları **başlık adına göre** okur; sıraları önemli değildir.
+* Okunan satırlar **taslak beklemeden** doğrudan gelir veya gider faturası olarak kaydedilir.
+* Her yükleme bir **toplu iş numarası** (`importBatch`) ve işlenme zamanı (`importedAt`) alır.
+* `Gelir - Gider → İşlenen Faturalar` sayfası bu kayıtları listeler: işlenme zamanı, yön
+  (gelir/gider), müşteri, fatura tarihi/no, para birimi, vergiler hariç/dahil tutar ve KDV.
+  Yön ve yükleme bazında süzülebilir, müşteri veya fatura no ile aranabilir.
+* Hatalı satırlar **satır numarası, sebep ve ham içerikle** ayrı bir tabloda bildirilir;
+  geçerli satırlar yine de işlenir.
+* Elle girilen faturalar bu listede yer almaz (künyesi olmadığı için).
+
+---
+
+## 22. Menü Mimarisi (PRD III §2)
+
+```
+▾ GENEL          → Dashboard · Fiyat Girişi · Oda Ayarları
+▾ GELİR - GİDER  → Gelirler · Giderler · Genel Harcamalar · Gider Faturaları ·
+                   İşlenen Faturalar · Çalışanlar · Ekstra Çalışan ·
+                   Yabancı Çalışanlar · Vergiler
+▾ RESTORAN       → Restoran Gelirleri · Ekstra Giderler · Toptancılar
+▾ KASA           → Gün Sonu / Kasa
+▾ RAPORLAR       → Finansal Raporlar · Excel İşlemleri
+▾ YÖNETİM        → Kullanıcı ve Yetki · Yedekleme · Ayarlar
+```
+
+**Rezervasyonlar modülü kaldırıldı.** Menü girdisi, sayfası, `rezervasyonlar` modül
+yetkisi, `/api/reservations` uçları ve rezervasyon Excel şablonu sistemden çıkarıldı;
+sistem yalnızca finansal verilere odaklanır. Mevcut rezervasyon verisi silinmez:
+geçmiş oda geliri ve doluluk analizleri (oda kârlılığı, fiyat tavsiyesi) bu veriden
+beslenmeye devam eder, ancak yeni kayıt girilemez.
+
+**Giderler sayfası** artık grafik, halka diyagram ve gösterge paneli içermez.
+Gelir paneliyle aynı düzendedir: başlık, kaynak kısayolları, dönem toplamı ve
+tek bir veri tablosu.
+
+---
+
+## 23. Karşılama Sayfası (PRD III §3)
+
+Oturum yokken adres kökü (`/`) **karşılama sayfasını** açar:
+
+| Bölüm | İçerik |
+| --- | --- |
+| Üst bar | Marka + sağ üstte **Giriş Yap** |
+| Hero | "Butik Otel Gelir Gider Sistemi" başlığı, tanıtım metni, ortada **Giriş Yap**, uygulama arayüzünü temsil eden SVG mockup |
+| Faydalar | Nokta Atışı Kârlılık Analizi · Otomatik Vergi Hesaplama · Otel ve Restoran Finansı Bir Arada · e-Fatura Excel Aktarımı |
+| Footer | İletişim (telefon, e-posta), Destek, sistem notu ve telif hakkı satırı |
+
+"Giriş Yap" adresi `#giris` yapar ve mevcut giriş ekranını açar. Oturum süresi dolduğunda
+veya kullanıcı çıkış yaptığında doğrudan giriş ekranı gelir (karşılama sayfası adres kökü içindir).
+
+---
+
+## 24. Ana Dashboard ve Vergi Algoritması (PRD III §4)
+
+Dashboard dokuz göstergeyi bu sırayla gösterir:
+
+| # | Kart | Kaynak |
+| --- | --- | --- |
+| 1 | **Otel Geliri** | Gelir faturaları + geçmiş oda gelirleri (KDV dahil) |
+| 2 | **Restoran Geliri** | Restoran gün sonu kayıtları (KDV dahil) |
+| 3 | **Toplam Giderler** | Tüm gider kalemleri — sigortalı maaşlar dâhil + olumsuz kur farkı |
+| 4 | **Gelir KDV'si (Otel + Restoran)** | İç yüzdeyle: otel %KDV + restoran %KDV |
+| 5 | **Gider KDV Toplamı** | Gider faturalarında (dahil − hariç) + toptancı faturalarının KDV'si |
+| 6 | **Turizm Payı** | **Yalnızca** KDV hariç otel geliri × oran |
+| 7 | **Konaklama Vergisi** | **Yalnızca** KDV hariç otel geliri × oran |
+| 8 | **Gelir Vergisi** | Aşağıdaki dört adımlı algoritma |
+| 9 | **NET KÂR** | Vergi matrahı − gelir vergisi |
+
+### Dört adımlı gelir vergisi algoritması
+
+```
+1) Toplam Gelir      = Otel Geliri + Restoran Geliri (+ olumlu kur farkı)
+2) Toplam İndirimler = Toplam Giderler (sigortalı maaşlar dâhil)
+                       + Gider KDV Toplamı + Konaklama Vergisi + Turizm Payı
+3) Vergi Matrahı     = Toplam Gelir − Toplam İndirimler
+4) Gelir Vergisi     = Vergi Matrahı × Gelir/Kurumlar Vergisi oranı
+NET KÂR              = Vergi Matrahı − Gelir Vergisi
+```
+
+Dashboard'daki **Gelir Vergisi Hesabı** kartı bu dört adımı kalem kalem gösterir;
+böylece sonuç mali müşavirle satır satır doğrulanabilir.
+
+**Uygulama notları**
+
+* Sigortalı çalışan maaşları `Toplam Giderler` kartının içindedir ve indirimlerde
+  **iki kez sayılmaz**; formül kartında "Sigortalı çalışan maaşları" ve "Diğer giderler"
+  olarak ayrı ayrı gösterilir.
+* Matrah negatifse gelir vergisi 0 olur; net kâr zararı gösterir.
+* Turizm payı ve konaklama vergisinin matrahı **KDV hariç** otel geliridir; restoran
+  geliri bu iki kaleme hiç girmez.
+* Kur farkı (bkz. §19) olumlu tarafta gelire, olumsuz tarafta gidere eklenir.
+* Oranlar `Ayarlar → Vergi ve Finans` bölümünden değiştirilir; hiçbiri sabit kodlanmamıştır.
+
+> Gider KDV'sinin matrahtan düşülmesi PRD III'te belirtilen iş kuralıdır. KDV normalde
+> ayrı beyan edilen bir vergidir; canlı kullanımdan önce mali müşavirinize doğrulatın.

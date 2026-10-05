@@ -361,26 +361,3 @@ test('gider tutarı değişmişse çakışma olarak bildirilir', async () => {
   assert.equal(result.imported, 0);
   assert.equal((await load()).expenses[0].amount, 12500, 'mevcut tutar korunmalı');
 });
-
-test('aynı rezervasyon dosyası ikinci kez yüklenince hata değil atlama üretir', async () => {
-  const db = emptyDb();
-  const { createRoom } = await import('../src/core/model.js');
-  db.rooms = [createRoom({
-    id: 'r1', number: '101', name: 'Suit', maxOccupancy: 3,
-    beds: [{ type: 'double', count: 1 }, { type: 'single', count: 1 }],
-  })];
-  await resetForTests(db);
-
-  // Giriş · Çıkış · Oda No · Misafir · Kişi · Tutar · Para Birimi · Kanal · Komisyon · Kahvaltı
-  const buffer = templateWorkbook('gelir', [
-    ['2026-10-03', '2026-10-06', '101', 'Yılmaz Ailesi', 2, 18000, 'TRY', 'direct', 0, 'Evet'],
-  ]);
-  const first = await importRows(parseWorkbook(buffer), 'gelir', ADMIN, false);
-  assert.equal(first.imported, 1, JSON.stringify(first.invalidRows));
-
-  const second = await importRows(parseWorkbook(buffer), 'gelir', ADMIN, false);
-  assert.equal(second.imported, 0);
-  assert.equal(second.skippedCount, 1, 'çakışan tarih hatası değil, atlama olmalı');
-  assert.equal(second.invalidCount, 0);
-  assert.equal((await load()).reservations.length, 1);
-});

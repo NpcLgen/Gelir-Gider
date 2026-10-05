@@ -337,6 +337,13 @@ export function createInvoice(patch = {}) {
     fxSource: text(patch.fxSource),
     /** Fiilen kesilen faturanın TL tutarı; kur farkı bundan hesaplanır. */
     invoicedAmountTry: num(patch.invoicedAmountTry, 0),
+    /* --- Excel içe aktarım künyesi (PRD III §1) --- */
+    /** Excel'den geldiyse işlenme zamanı; elle girildiyse boş. */
+    importedAt: text(patch.importedAt),
+    /** Aynı yüklemeden gelen kayıtları gruplayan toplu iş numarası. */
+    importBatch: text(patch.importBatch),
+    /** Hangi şablondan işlendiği (gelenFatura / gidenFatura). */
+    importKind: text(patch.importKind),
   };
 }
 

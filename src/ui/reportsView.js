@@ -20,7 +20,7 @@ export function reportsView(app) {
 
   // Kur farkı (PRD §19): kesilen fatura TL'si ile kurdan hesaplanan tutarın farkı.
   const fxDiff = periodExchangeDifference({
-    reservations: app.can('rezervasyonlar') ? state.reservations : [],
+    reservations: state.reservations, // geçmiş oda gelirleri (modül kaldırıldı, veri korunuyor)
     salesInvoices: app.can('gelirler') ? state.salesInvoices : [],
     purchaseInvoices: app.can('giderFaturalari') ? state.purchaseInvoices : [],
     from: p.from, to: p.to,

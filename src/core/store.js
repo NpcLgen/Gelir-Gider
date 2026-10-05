@@ -64,8 +64,6 @@ export async function createStore() {
     },
 
     /* --- Rezervasyonlar --- */
-    saveReservation: (patch) => mutate(() => api.post('/api/reservations', patch)),
-    deleteReservation: (id) => mutate(() => api.del(`/api/reservations/${id}`)),
 
     /* --- Giderler --- */
     saveExpense: (patch) => mutate(() => api.post('/api/expenses', patch)),

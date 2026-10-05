@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
-import { makeGo } from './nav.mjs';
+import { makeGo, openLogin } from './nav.mjs';
 import { exportWorkbook } from '../../server/excel.js';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173/';
@@ -95,8 +95,7 @@ const waitToast = (t) => page.waitForFunction((x) => {
 /** "₺39.596,06" → 39596.06 */
 const money = (text) => Number(String(text).replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.'));
 
-await page.goto(BASE, { waitUntil: 'load' });
-await page.waitForSelector('.login-card');
+await openLogin(page, BASE);
 
 async function tryLogin(password) {
   await page.fill('.login-card input[type="text"]', USER);
@@ -136,9 +135,30 @@ await step('Gelirler sayfası gider sayfasıyla aynı düzeni kullanıyor', asyn
   console.log(`   sütunlar: ${headers.filter(Boolean).join(' · ')}`);
 });
 
-await step('Rezervasyonlar ayrı bir sayfaya taşındı', async () => {
-  await go('Rezervasyonlar');
-  await page.waitForSelector('button:has-text("Yeni Rezervasyon")');
+await step('Rezervasyonlar modülü menüden tamamen kaldırıldı', async () => {
+  // PRD III §2 — sistem yalnızca finansal verilere odaklanır.
+  const gruplar = await page.locator('.nav-group').count();
+  const items = new Set(await page.$$eval('.nav-sub .nav-item', (els) => els.map((e) => e.textContent.trim())));
+  for (let i = 0; i < gruplar; i += 1) {
+    const grup = page.locator('.nav-group').nth(i);
+    if ((await grup.getAttribute('aria-expanded')) === 'true') continue;
+    await grup.click();
+    await page.waitForTimeout(150);
+    for (const item of await page.$$eval('.nav-sub .nav-item', (els) => els.map((e) => e.textContent.trim()))) {
+      items.add(item);
+    }
+  }
+  if ([...items].some((i) => i.includes('Rezervasyon'))) throw new Error('rezervasyon menüsü duruyor');
+  // Sunucuda da uç nokta kapalı olmalı.
+  const status = await page.evaluate(async () => {
+    const r = await fetch('/api/reservations', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+    return r.status;
+  });
+  if (status !== 404) throw new Error(`rezervasyon ucu hâlâ açık: ${status}`);
+  console.log(`   menüde yok · API ${status}`);
 });
 
 await step('Giden fatura dosyası gelir faturalarına aktarılıyor', async () => {
@@ -254,18 +274,21 @@ await step('Aynı fatura no farklı tutarla gelirse çakışma bildiriliyor', as
 await step('Faturalar Dashboard gelir ve gider toplamına giriyor', async () => {
   await go('Dashboard');
   await page.waitForSelector('.kpi-grid');
-  const gelir = await page.textContent('.kpi:has-text("Toplam Gelir")');
-  if (!gelir.includes('fatura')) throw new Error(`gelir kırılımında fatura yok: ${gelir.replace(/\s+/g, ' ')}`);
-  const gider = await page.textContent('.kpi:has-text("Toplam Gider")');
-  if (!gider.includes('fatura')) throw new Error(`gider kırılımında fatura yok: ${gider.replace(/\s+/g, ' ')}`);
-  console.log(`   ${gelir.replace(/\s+/g, ' ').trim().slice(0, 110)}`);
+  // PRD III §4 — gelir faturaları otel gelirine, gider faturaları toplam gidere girer.
+  const otel = (await page.textContent('.kpi:has-text("Otel Geliri")')).replace(/\s+/g, ' ');
+  if (!otel.includes('fatura')) throw new Error(`otel geliri kırılımında fatura yok: ${otel}`);
+  const giderKdv = (await page.textContent('.kpi:has-text("Gider KDV Toplamı")')).replace(/\s+/g, ' ');
+  if (/₺0,00/.test(giderKdv)) throw new Error(`gider faturalarının KDV'si yansımadı: ${giderKdv}`);
+  console.log(`   ${otel.trim().slice(0, 110)} · ${giderKdv.trim().slice(0, 60)}`);
 });
 
 await step('Giderler özetinde "Gider Faturaları" kaynağı görünüyor', async () => {
   await go('Giderler');
   await page.waitForSelector('.card:has-text("Tüm Gider Kalemleri")');
-  const kpis = await page.$$eval('.kpi', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
-  if (!kpis.some((k) => k.includes('Gider Faturaları'))) throw new Error(`kaynak kartı yok: ${kpis.join(' | ')}`);
+  // PRD III §2 — sayfa sade tablo; kaynaklar üstte kısayol düğmesi.
+  if (await page.$('.donut')) throw new Error('giderler sayfasında grafik kaldı');
+  const kisayollar = await page.$$eval('.btn.small.ghost', (els) => els.map((e) => e.textContent.trim()));
+  if (!kisayollar.some((k) => k.includes('Gider Faturaları'))) throw new Error(`kısayol yok: ${kisayollar.join(' · ')}`);
   const tablo = await page.textContent('.card:has-text("Tüm Gider Kalemleri")');
   if (!tablo.includes('MERAM')) throw new Error('fatura kalemi listede yok');
 });

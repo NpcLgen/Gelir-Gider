@@ -16,8 +16,8 @@ import { createCashDay, createEmployee, createExtraWorker, createForeignWorker,
   defaultTaxRates, validateCashDay, validateEmployee, validateExtraWorker, validateForeignWorker,
   validateRestaurantExpense, validateRestaurantIncome, validateSupplier, validateSupplierTxn,
   validateTaxRates } from '../src/core/finance.js';
-import { createExpense, createPriceEntry, createReservation, createRoom, defaultSettings,
-  validateExpense, validatePriceEntry, validateReservation, validateRoom, validateSettings } from '../src/core/model.js';
+import { createExpense, createPriceEntry, createRoom, defaultSettings,
+  validateExpense, validatePriceEntry, validateRoom, validateSettings } from '../src/core/model.js';
 import { record } from './audit.js';
 import { allPermissions, can, MODULES, normalizePermissions } from './permissions.js';
 import { buildTemplate, exportWorkbook, parseWorkbook, TEMPLATES } from './excel.js';
@@ -117,13 +117,6 @@ const RESOURCES = {
         : e));
     },
     sort: (a, b) => String(a.number).localeCompare(String(b.number), 'tr', { numeric: true }),
-  },
-  reservations: {
-    permission: 'rezervasyonlar', factory: createReservation,
-    seal: (item, db) => applySeal(item, db, item.checkIn),
-    validate: (item, db) => validateReservation(item, { rooms: db.rooms, reservations: db.reservations }),
-    label: 'Rezervasyon', summary: (r) => `${r.guestName} ${r.checkIn}→${r.checkOut}`,
-    sort: (a, b) => b.checkIn.localeCompare(a.checkIn),
   },
   expenses: {
     permission: 'genelHarcamalar', factory: createExpense,
@@ -277,7 +270,7 @@ route('GET', /^\/api\/state$/, async ({ res, user }) => {
 
 const resourceName = (path) => path.replace(/^\/api\//, '').split('/')[0];
 
-route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices|exchangeRates)$/, async ({ req, res, user, path }) => {
+route('POST', /^\/api\/(rooms|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices|exchangeRates)$/, async ({ req, res, user, path }) => {
   const name = resourceName(path);
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -299,7 +292,7 @@ route('POST', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppl
   sendJson(res, 200, saved);
 });
 
-route('DELETE', /^\/api\/(rooms|reservations|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices|exchangeRates)\/([\w-]+)$/, async ({ res, user, match }) => {
+route('DELETE', /^\/api\/(rooms|expenses|employees|extraWorkers|suppliers|supplierTxns|cashDays|restaurantIncomes|restaurantExpenses|foreignWorkers|purchaseInvoices|salesInvoices|exchangeRates)\/([\w-]+)$/, async ({ res, user, match }) => {
   const [, name, id] = match;
   const spec = RESOURCES[name];
   requirePermission(user, spec.permission);
@@ -831,11 +824,6 @@ const DUPLICATE_RULES = {
     same: (a, b) => sameMoney(a.amount, b.amount) && norm(a.currency) === norm(b.currency),
     label: (e) => `${e.date} tarihli "${e.description}" gideri`,
   },
-  reservation: {
-    key: (r) => [r.roomId, r.checkIn, r.checkOut, norm(r.guestName)].join('|'),
-    same: (a, b) => sameMoney(a.totalAmount, b.totalAmount) && norm(a.currency) === norm(b.currency),
-    label: (r) => `${r.guestName} (${r.checkIn} → ${r.checkOut}) rezervasyonu`,
-  },
 };
 
 /**
@@ -864,14 +852,17 @@ export async function importRows(parsed, kind, user, dryRun = false) {
   const db = await load();
   const valid = [];
   const invalidRows = [];
+  // İşlenen faturaların künyesi: aynı yüklemedeki kayıtlar tek toplu iş altında toplanır.
+  const importedAt = new Date().toISOString();
+  const importBatch = `imp_${importedAt.replace(/[^\d]/g, '').slice(0, 14)}`;
   /** Daha önce birebir aynısı işlenmiş satırlar. */
   const skippedRows = [];
   /** Aynı anahtarla kayıtlı ama bilgileri değişmiş satırlar. */
   const conflictRows = [];
 
-  const ruleName = template.direction ? 'invoice' : (kind === 'gider' ? 'expense' : 'reservation');
+  const ruleName = template.direction ? 'invoice' : 'expense';
   const rule = DUPLICATE_RULES[ruleName];
-  const collection = template.target ?? (kind === 'gider' ? 'expenses' : 'reservations');
+  const collection = template.target ?? 'expenses';
   // Mevcut kayıtlar anahtarlarıyla indekslenir; aktarım sırasındakiler de eklenir.
   const seen = new Map();
   for (const item of db[collection] ?? []) {
@@ -908,6 +899,9 @@ export async function importRows(parsed, kind, user, dryRun = false) {
       // e-Fatura dosyası: yalnızca şablondaki yedi sütun okunur.
       const item = createInvoice({
         direction: template.direction,
+        importedAt,
+        importBatch,
+        importKind: kind,
         customer: get('customer'),
         date: parseDate(get('date')),
         invoiceNo: get('invoiceNo'),
@@ -939,29 +933,6 @@ export async function importRows(parsed, kind, user, dryRun = false) {
       if (get('roomNumber') && !room) errors.push(`"${get('roomNumber')}" numaralı oda bulunamadı.`);
       if (errors.length) invalidRows.push({ line: lineNo, errors, raw: row });
       else if (!alreadyProcessed(item, lineNo, row)) {
-        seen.set(rule.key(item), item);
-        valid.push(item);
-      }
-    } else {
-      const room = db.rooms.find((r) => String(r.number) === get('roomNumber'));
-      const item = createReservation({
-        roomId: room?.id ?? '',
-        guestName: get('guestName'),
-        guests: Number(get('guests')),
-        checkIn: parseDate(get('checkIn')),
-        checkOut: parseDate(get('checkOut')),
-        totalAmount: parseAmount(get('totalAmount')),
-        currency: get('currency').toUpperCase() || 'TRY',
-        channel: get('channel') || 'direct',
-        commissionRate: parseAmount(get('commissionRate')) || 0,
-        breakfastIncluded: parseBool(get('breakfastIncluded')),
-      });
-      // Aynı rezervasyon ikinci kez yüklenirse çakışma hatası yerine atlanır.
-      if (room && alreadyProcessed(item, lineNo, row)) return;
-      const errors = validateReservation(item, { rooms: db.rooms, reservations: [...db.reservations, ...valid] });
-      if (!room) errors.unshift(`"${get('roomNumber')}" numaralı oda bulunamadı.`);
-      if (errors.length) invalidRows.push({ line: lineNo, errors, raw: row });
-      else {
         seen.set(rule.key(item), item);
         valid.push(item);
       }

@@ -285,22 +285,6 @@ export const TEMPLATES = {
       { key: 'vendor', label: 'Tedarikçi', example: 'Enerjisa' },
     ],
   },
-  gelir: {
-    sheet: 'Gelirler',
-    columns: [
-      { key: 'checkIn', label: 'Giriş Tarihi (YYYY-AA-GG)', example: '2026-10-03', required: true },
-      { key: 'checkOut', label: 'Çıkış Tarihi (YYYY-AA-GG)', example: '2026-10-06', required: true },
-      { key: 'roomNumber', label: 'Oda No', example: '101', required: true },
-      { key: 'guestName', label: 'Misafir Adı', example: 'Yılmaz Ailesi', required: true },
-      { key: 'guests', label: 'Kişi Sayısı', example: 2, required: true },
-      { key: 'totalAmount', label: 'Toplam Tutar', example: 18000, required: true },
-      { key: 'currency', label: 'Para Birimi (TRY/EUR)', example: 'TRY' },
-      { key: 'channel', label: 'Kanal (direct/booking/airbnb/other)', example: 'booking' },
-      { key: 'commissionRate', label: 'Komisyon (%)', example: 15 },
-      { key: 'breakfastIncluded', label: 'Kahvaltı Dahil (Evet/Hayır)', example: 'Evet' },
-    ],
-  },
-
   /**
    * e-Fatura portalı Excel çıktısı. Portal dosyasında başka sütunlar da bulunur;
    * içe aktarımda yalnızca aşağıdaki başlıklar okunur, sıraları önemli değildir.
